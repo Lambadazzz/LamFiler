@@ -35,3 +35,12 @@ C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\UploadCo
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\UploadConfirmWindow.g.cs
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\DeleteConfirmWindow.baml
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\DeleteConfirmWindow.g.cs
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\runtimes\win-x86\native\WebView2Loader.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\runtimes\win-x64\native\WebView2Loader.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\runtimes\win-arm64\native\WebView2Loader.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\Microsoft.Web.WebView2.Core.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\Microsoft.Web.WebView2.WinForms.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\Microsoft.Web.WebView2.Wpf.dll
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\PreviewWindow.baml
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\PreviewWindow.g.cs
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\LamFiler.sourcelink.json

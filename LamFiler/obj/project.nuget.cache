@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "65hByiAMS0Q=",
+  "dgSpecHash": "R7D3A8FSHQg=",
   "success": true,
   "projectFilePath": "C:\\Users\\nyshe\\source\\repos\\LamFiler\\LamFiler\\LamFiler.csproj",
   "expectedPackageFiles": [
@@ -8,6 +8,7 @@
     "C:\\Users\\nyshe\\.nuget\\packages\\google.apis.auth\\1.68.0\\google.apis.auth.1.68.0.nupkg.sha512",
     "C:\\Users\\nyshe\\.nuget\\packages\\google.apis.core\\1.68.0\\google.apis.core.1.68.0.nupkg.sha512",
     "C:\\Users\\nyshe\\.nuget\\packages\\google.apis.drive.v3\\1.68.0.3601\\google.apis.drive.v3.1.68.0.3601.nupkg.sha512",
+    "C:\\Users\\nyshe\\.nuget\\packages\\microsoft.web.webview2\\1.0.2478.35\\microsoft.web.webview2.1.0.2478.35.nupkg.sha512",
     "C:\\Users\\nyshe\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512",
     "C:\\Users\\nyshe\\.nuget\\packages\\system.management\\7.0.2\\system.management.7.0.2.nupkg.sha512"
   ],

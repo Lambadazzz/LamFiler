@@ -53,6 +53,10 @@
             "Google.Apis.Drive.v3": {
               "target": "Package",
               "version": "[1.68.0.3601, )"
+            },
+            "Microsoft.Web.WebView2": {
+              "target": "Package",
+              "version": "[1.0.2478.35, )"
             }
           },
           "imports": [

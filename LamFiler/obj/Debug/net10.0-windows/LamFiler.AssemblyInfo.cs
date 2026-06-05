@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d6bd5ceb13763096da7afb1fd4b9b118219c6172")]
 [assembly: System.Reflection.AssemblyProductAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

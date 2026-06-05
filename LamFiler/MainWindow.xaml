@@ -9,10 +9,10 @@
         WindowStartupLocation="CenterScreen"
         Background="#1E1E1E"
         KeyDown="Window_KeyDown"
-        PreviewKeyDown="Window_PreviewKeyDown">
+        PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewKeyUp="Window_PreviewKeyUp">
 
     <Window.Resources>
-        <!-- Цвета -->
         <SolidColorBrush x:Key="BgPrimary"   Color="#1E1E1E"/>
         <SolidColorBrush x:Key="BgSecondary" Color="#252526"/>
         <SolidColorBrush x:Key="BgHover"     Color="#2D2D2D"/>
@@ -22,7 +22,6 @@
         <SolidColorBrush x:Key="TextMuted"   Color="#858585"/>
         <SolidColorBrush x:Key="Accent"      Color="#0078D4"/>
 
-        <!-- Стиль кнопки-иконки (toolbar) -->
         <Style x:Key="IconBtn" TargetType="Button">
             <Setter Property="Width"  Value="28"/>
             <Setter Property="Height" Value="28"/>
@@ -33,8 +32,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                CornerRadius="4">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -50,7 +48,6 @@
             </Setter>
         </Style>
 
-        <!-- Стиль строк файлов -->
         <Style x:Key="FileRow" TargetType="ListViewItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
@@ -62,8 +59,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListViewItem">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                Padding="12,0">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" Padding="12,0">
                             <ContentPresenter VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -79,7 +75,6 @@
             </Setter>
         </Style>
 
-        <!-- Скроллбар тонкий -->
         <Style TargetType="ScrollBar">
             <Setter Property="Width" Value="6"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -88,9 +83,9 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="40"/>  <!-- Toolbar -->
-            <RowDefinition Height="*"/>   <!-- Body -->
-            <RowDefinition Height="22"/>  <!-- Statusbar -->
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="22"/>
         </Grid.RowDefinitions>
 
         <!-- ══════════════ TOOLBAR ══════════════ -->
@@ -98,36 +93,30 @@
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
             <Grid Margin="8,0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>  <!-- Back/Fwd -->
-                    <ColumnDefinition Width="*"/>     <!-- Breadcrumb -->
-                    <ColumnDefinition Width="Auto"/>  <!-- Drive btn -->
-                    <ColumnDefinition Width="Auto"/>  <!-- Search -->
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Назад / Вперёд -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
-                    <Button x:Name="BtnBack" Style="{StaticResource IconBtn}"
-                            Click="BtnBack_Click" IsEnabled="False" ToolTip="Назад">
+                    <Button x:Name="BtnBack" Style="{StaticResource IconBtn}" Click="BtnBack_Click" IsEnabled="False" ToolTip="Назад">
                         <Path Data="M15 19 L8 12 L15 5" Stroke="{StaticResource TextMuted}"
                               StrokeThickness="1.5" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                               Width="10" Height="14" Stretch="Uniform"/>
                     </Button>
-                    <Button x:Name="BtnForward" Style="{StaticResource IconBtn}"
-                            Click="BtnForward_Click" IsEnabled="False" ToolTip="Вперёд">
+                    <Button x:Name="BtnForward" Style="{StaticResource IconBtn}" Click="BtnForward_Click" IsEnabled="False" ToolTip="Вперёд">
                         <Path Data="M9 5 L16 12 L9 19" Stroke="{StaticResource TextMuted}"
                               StrokeThickness="1.5" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                               Width="10" Height="14" Stretch="Uniform"/>
                     </Button>
                 </StackPanel>
 
-                <!-- Breadcrumb / адресная строка -->
                 <Border Grid.Column="1" VerticalAlignment="Center"
                         Background="{StaticResource BgPrimary}"
                         BorderBrush="{StaticResource Border}" BorderThickness="1"
                         CornerRadius="4" Margin="0,0,8,0" Height="26">
-                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Disabled"
-                                  Padding="6,0">
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="6,0">
                         <ItemsControl x:Name="Breadcrumb" VerticalAlignment="Center">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -137,8 +126,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <StackPanel Orientation="Horizontal">
-                                        <Button Content="{Binding Label}"
-                                                Tag="{Binding Path}"
+                                        <Button Content="{Binding Label}" Tag="{Binding Path}"
                                                 Click="BreadcrumbPart_Click"
                                                 Background="Transparent" BorderThickness="0"
                                                 Foreground="{StaticResource TextMuted}"
@@ -152,14 +140,11 @@
                     </ScrollViewer>
                 </Border>
 
-                <!-- Google Drive кнопка -->
                 <Border Grid.Column="2" VerticalAlignment="Center" Margin="0,0,6,0"
-                        BorderBrush="{StaticResource Border}" BorderThickness="1"
-                        CornerRadius="4" Height="26">
+                        BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4" Height="26">
                     <Button x:Name="BtnUploadDrive" Background="Transparent" BorderThickness="0"
                             Foreground="{StaticResource TextMuted}" FontSize="12"
-                            Cursor="Hand" Padding="8,0"
-                            Click="BtnUploadDrive_Click"
+                            Cursor="Hand" Padding="8,0" Click="BtnUploadDrive_Click"
                             ToolTip="Загрузить на Google Drive">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"
@@ -169,11 +154,8 @@
                     </Button>
                 </Border>
 
-                <!-- Search — иконка справа, поле выезжает влево при наведении -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
-                            MouseEnter="SearchArea_MouseEnter"
-                            MouseLeave="SearchArea_MouseLeave">
-
+                            MouseEnter="SearchArea_MouseEnter" MouseLeave="SearchArea_MouseLeave">
                     <Border x:Name="SearchBorder"
                             Background="{StaticResource BgPrimary}"
                             BorderBrush="{StaticResource Border}" BorderThickness="1"
@@ -188,10 +170,8 @@
                                  KeyDown="SearchBox_KeyDown"
                                  LostFocus="SearchBox_LostFocus"/>
                     </Border>
-
-                    <Button Style="{StaticResource IconBtn}"
-                            x:Name="BtnSearchToggle"
-                            ToolTip="Поиск (нажмите . для фильтра по расширению)">
+                    <Button Style="{StaticResource IconBtn}" x:Name="BtnSearchToggle"
+                            ToolTip="Поиск">
                         <Path Data="M21 21 L15.5 15.5 M17 11 A6 6 0 1 1 5 11 A6 6 0 1 1 17 11"
                               Stroke="{StaticResource TextMuted}"
                               StrokeThickness="1.5" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
@@ -221,8 +201,7 @@
 
             <!-- Splitter 1 -->
             <GridSplitter Grid.Column="1" Width="4" Background="Transparent"
-                          HorizontalAlignment="Center" VerticalAlignment="Stretch"
-                          Cursor="SizeWE"/>
+                          HorizontalAlignment="Center" VerticalAlignment="Stretch" Cursor="SizeWE"/>
 
             <!-- Основная область -->
             <Grid Grid.Column="2">
@@ -231,7 +210,6 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Заголовки колонок -->
                 <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
                         BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
                     <Grid Margin="12,0">
@@ -248,7 +226,6 @@
                     </Grid>
                 </Border>
 
-                <!-- Список файлов -->
                 <ListView x:Name="FileList" Grid.Row="1"
                           Background="{StaticResource BgPrimary}"
                           BorderThickness="0"
@@ -296,10 +273,9 @@
 
             <!-- Splitter 2 -->
             <GridSplitter Grid.Column="3" Width="4" Background="Transparent"
-                          HorizontalAlignment="Center" VerticalAlignment="Stretch"
-                          Cursor="SizeWE"/>
+                          HorizontalAlignment="Center" VerticalAlignment="Stretch" Cursor="SizeWE"/>
 
-            <!-- Preview панель -->
+            <!-- Preview панель (правая, постоянная) -->
             <Border Grid.Column="4" Background="{StaticResource BgSecondary}"
                     BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0">
                 <Grid>
@@ -308,7 +284,6 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Превью-изображение / иконка -->
                     <Border Grid.Row="0" Background="#111111" ClipToBounds="True">
                         <Grid>
                             <Image x:Name="PreviewImage" Stretch="UniformToFill" Opacity="0"/>
@@ -318,7 +293,6 @@
                         </Grid>
                     </Border>
 
-                    <!-- Мета + кнопки -->
                     <Grid Grid.Row="1">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*"/>
@@ -329,20 +303,17 @@
                             <StackPanel x:Name="PreviewMeta" Margin="12,10,12,10"/>
                         </ScrollViewer>
 
-                        <!-- Кнопки действий -->
                         <StackPanel x:Name="PreviewActions" Grid.Row="1"
                                     Margin="10,0,10,10" Visibility="Collapsed">
                             <Border Height="0.5" Background="{StaticResource Border}" Margin="0,0,0,8"/>
-                            <Button x:Name="BtnPreviewOpen"
-                                    Click="BtnPreviewOpen_Click"
+                            <Button x:Name="BtnPreviewOpen" Click="BtnPreviewOpen_Click"
                                     Height="28" Margin="0,0,0,6"
                                     Background="{StaticResource Accent}"
                                     Foreground="White" BorderThickness="0"
                                     FontSize="12" Cursor="Hand">
                                 <Button.Template>
                                     <ControlTemplate TargetType="Button">
-                                        <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                                CornerRadius="4">
+                                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4">
                                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -354,8 +325,7 @@
                                 </Button.Template>
                                 <TextBlock Text="▶  Открыть" FontSize="12"/>
                             </Button>
-                            <Button x:Name="BtnPreviewOpenWith"
-                                    Click="BtnPreviewOpenWith_Click"
+                            <Button x:Name="BtnPreviewOpenWith" Click="BtnPreviewOpenWith_Click"
                                     Height="28"
                                     Background="{StaticResource BgHover}"
                                     Foreground="{StaticResource TextMuted}"
@@ -382,6 +352,7 @@
                     </Grid>
                 </Grid>
             </Border>
+
         </Grid>
 
         <!-- ══════════════ STATUSBAR ══════════════ -->

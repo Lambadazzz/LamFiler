@@ -1,0 +1,103 @@
+<Window x:Class="LamFiler.PreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Preview" Height="600" Width="800"
+        MinHeight="300" MinWidth="400"
+        WindowStartupLocation="CenterOwner"
+        Background="#1E1E1E"
+        KeyDown="Window_KeyDown"
+        Closing="Window_Closing">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="BgPrimary"   Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="BgSecondary" Color="#252526"/>
+        <SolidColorBrush x:Key="Border"      Color="#3C3C3C"/>
+        <SolidColorBrush x:Key="TextPrimary" Color="#CCCCCC"/>
+        <SolidColorBrush x:Key="TextMuted"   Color="#858585"/>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Заголовок -->
+        <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
+            <Grid Margin="12,0">
+                <TextBlock x:Name="TitleText" FontSize="13"
+                           Foreground="{StaticResource TextPrimary}"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+            </Grid>
+        </Border>
+
+        <!-- Контент -->
+        <Grid Grid.Row="1">
+            <!-- Изображение -->
+            <ScrollViewer x:Name="ImageScroll" Visibility="Collapsed"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto"
+                          Background="#111111">
+                <Image x:Name="PreviewImg" Stretch="None"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       MouseWheel="PreviewImg_MouseWheel"/>
+            </ScrollViewer>
+
+            <!-- Текст / код -->
+            <Grid x:Name="TextGrid" Visibility="Collapsed">
+                <RichTextBox x:Name="PreviewText"
+                             Background="#1E1E1E"
+                             Foreground="#CCCCCC"
+                             BorderThickness="0"
+                             IsReadOnly="True"
+                             FontFamily="Consolas, Courier New"
+                             FontSize="13"
+                             Padding="16"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             AcceptsReturn="True"/>
+            </Grid>
+
+            <!-- PDF / Video через WebView2 -->
+            <wv2:WebView2 x:Name="WebView" Visibility="Collapsed"/>
+
+            <!-- Видео -->
+            <Grid x:Name="VideoGrid" Visibility="Collapsed" Background="#000">
+                <MediaElement x:Name="MediaEl"
+                              LoadedBehavior="Manual"
+                              UnloadedBehavior="Stop"
+                              Stretch="Uniform"
+                              MediaOpened="MediaEl_MediaOpened"
+                              MediaFailed="MediaEl_MediaFailed"/>
+                <!-- Контролы -->
+                <StackPanel VerticalAlignment="Bottom" Background="#AA000000" Margin="0,0,0,0">
+                    <Slider x:Name="SeekBar" Minimum="0" Maximum="1"
+                            Margin="10,6,10,2"
+                            Foreground="#0078D4"
+                            ValueChanged="SeekBar_ValueChanged"
+                            PreviewMouseDown="SeekBar_PreviewMouseDown"
+                            PreviewMouseUp="SeekBar_PreviewMouseUp"/>
+                    <StackPanel Orientation="Horizontal" Margin="10,2,10,8">
+                        <Button x:Name="BtnPlay" Content="▶" Width="28" Height="28"
+                                Background="Transparent" Foreground="#CCCCCC" BorderThickness="0"
+                                Cursor="Hand" FontSize="14"
+                                Click="BtnPlay_Click"/>
+                        <TextBlock x:Name="TimeLabel" Foreground="#858585" FontSize="11"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- Unsupported -->
+            <StackPanel x:Name="UnsupportedPanel" Visibility="Collapsed"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="UnsupportedIcon" FontSize="64" TextAlignment="Center"/>
+                <TextBlock x:Name="UnsupportedText" FontSize="14"
+                           Foreground="#858585" TextAlignment="Center" Margin="0,12,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

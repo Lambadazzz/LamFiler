@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -73,7 +74,6 @@ namespace LamFiler
             {
                 foreach (var dir in Directory.GetDirectories(path).OrderBy(d => d))
                 {
-                    // Скрываем недоступные папки
                     try { Directory.GetFileSystemEntries(dir); }
                     catch { continue; }
                     var info = new DirectoryInfo(dir);
@@ -105,8 +105,8 @@ namespace LamFiler
             }
             ApplyFilter(SearchBox.Text);
             SetupWatcher(path);
+            AttachHoverTracking();
 
-            // Выделение
             if (restoreSelection && FileList.Items.Count > 0)
             {
                 var idx = Math.Min(selectIndex, FileList.Items.Count - 1);
@@ -225,10 +225,8 @@ namespace LamFiler
             {
                 if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
                 {
-                    if (fi.IsDir)
-                        Navigate(fi.FullPath);
-                    else
-                        FileContextMenuService.OpenDefault(fi.FullPath);
+                    if (fi.IsDir) Navigate(fi.FullPath);
+                    else FileContextMenuService.OpenDefault(fi.FullPath);
                     return;
                 }
                 hit = VisualTreeHelper.GetParent(hit);
@@ -236,7 +234,7 @@ namespace LamFiler
         }
 
         // ════════════════════════════════════════════════════════════════════
-        //  ПРЕВЬЮ
+        //  ПРЕВЬЮ (правая панель)
         // ════════════════════════════════════════════════════════════════════
 
         private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -278,7 +276,6 @@ namespace LamFiler
             if (!item.IsDir) { AddMeta("Size", item.Size); AddMeta("Type", item.TypeExt); }
             AddMeta("Modified", item.Modified);
 
-            // Кнопки — для файлов и папок
             PreviewActions.Visibility = Visibility.Visible;
             BtnPreviewOpenWith.Visibility = item.IsDir ? Visibility.Collapsed : Visibility.Visible;
         }
@@ -314,10 +311,8 @@ namespace LamFiler
         private void BtnPreviewOpenWith_Click(object sender, RoutedEventArgs e)
         {
             if (FileList.SelectedItem is not FileItem item) return;
-
             var apps = FileContextMenuService.GetOpenWithApps(item.FullPath);
             if (apps.Count == 0) { FileContextMenuService.OpenDefault(item.FullPath); return; }
-
             var menu = BuildContextMenu();
             foreach (var app in apps)
             {
@@ -342,7 +337,6 @@ namespace LamFiler
         private void UploadToDrive(List<string> paths)
         {
             var uploadPaths = new List<string>();
-
             foreach (var path in paths)
             {
                 if (Directory.Exists(path))
@@ -352,12 +346,8 @@ namespace LamFiler
                     if (!confirm.Confirmed) return;
                     uploadPaths.Add(confirm.UploadPath);
                 }
-                else
-                {
-                    uploadPaths.Add(path);
-                }
+                else uploadPaths.Add(path);
             }
-
             if (uploadPaths.Count > 0)
                 new UploadWindow(uploadPaths) { Owner = this }.ShowDialog();
         }
@@ -368,25 +358,21 @@ namespace LamFiler
 
         private void FileList_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            // Блокируем стандартную обработку стрелок ListView — наш Window_KeyDown всё сделает сам
             if (e.Key is Key.Up or Key.Down)
                 e.Handled = true;
         }
 
         private void FileList_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
         {
-            // Находим элемент под курсором
             var hit = e.OriginalSource as DependencyObject;
             while (hit != null)
             {
                 if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
                 {
-                    // Если кликнули по уже выделенному — блокируем сброс выделения
                     if (FileList.SelectedItems.Contains(fi))
                         e.Handled = true;
                     else
                     {
-                        // Кликнули по невыделенному — переключаем выделение на него
                         FileList.SelectedItems.Clear();
                         FileList.SelectedItem = fi;
                         e.Handled = true;
@@ -399,10 +385,8 @@ namespace LamFiler
 
         private void FileList_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
         {
-            // Берём все выделенные файлы
             var selected = FileList.SelectedItems.Cast<FileItem>().ToList();
             var item     = selected.Count == 1 ? selected[0] : null;
-            // Если выделено несколько — item = null (покажем батч-меню)
             if (selected.Count > 1) item = null;
 
             var menu = BuildContextMenu();
@@ -414,8 +398,7 @@ namespace LamFiler
                 menu.Items.Add(new Separator());
                 menu.Items.Add(Mni("📋", "Копировать пути",
                     () => FileContextMenuService.CopyPath(
-                        string.Join(Environment.NewLine,
-                            selected.Select(f => f.FullPath)))));
+                        string.Join(Environment.NewLine, selected.Select(f => f.FullPath)))));
             }
             else if (item != null)
             {
@@ -480,120 +463,88 @@ namespace LamFiler
             e.Handled = true;
         }
 
-        // ─── Фабрика меню ──────────────────────────────────────────────────
-
-        private static readonly SolidColorBrush MenuBg    = new(Color.FromRgb(0x25, 0x25, 0x26));
-        private static readonly SolidColorBrush MenuFg    = new(Color.FromRgb(0xCC, 0xCC, 0xCC));
-        private static readonly SolidColorBrush MenuHover = new(Color.FromRgb(0x3A, 0x3A, 0x3C));
-        private static readonly SolidColorBrush MenuDis   = new(Color.FromRgb(0x55, 0x55, 0x55));
-        private static readonly SolidColorBrush MenuBrd   = new(Color.FromRgb(0x3C, 0x3C, 0x3C));
-
         private static ContextMenu BuildContextMenu()
         {
             var tpl = new ControlTemplate(typeof(ContextMenu));
             var bd  = new FrameworkElementFactory(typeof(Border));
-            bd.SetValue(Border.BackgroundProperty,
-                new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
-            bd.SetValue(Border.BorderBrushProperty,
-                new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C)));
+            bd.SetValue(Border.BackgroundProperty,      new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
+            bd.SetValue(Border.BorderBrushProperty,     new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C)));
             bd.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-            bd.SetValue(Border.PaddingProperty, new Thickness(0, 4, 0, 4));
+            bd.SetValue(Border.PaddingProperty,         new Thickness(0, 4, 0, 4));
             bd.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
             tpl.VisualTree = bd;
-
-            var cm = new ContextMenu
-            {
-                OverridesDefaultStyle = true,
-                Template = tpl
-            };
-            return cm;
+            return new ContextMenu { OverridesDefaultStyle = true, Template = tpl };
         }
 
-        // Минимальный шаблон MenuItem без колонки иконок
         private static ControlTemplate BuildMniTemplate()
-        {
-            var tpl = new ControlTemplate(typeof(MenuItem));
-            var bd  = new FrameworkElementFactory(typeof(Border));
-            bd.Name = "Bd";
-            bd.SetValue(Border.BackgroundProperty,  new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
-            bd.SetValue(Border.PaddingProperty,     new Thickness(12, 6, 24, 6));
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.ContentSourceProperty, "Header");
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            bd.AppendChild(cp);
-            tpl.VisualTree = bd;
-
-            var hov = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
-            hov.Setters.Add(new Setter(Border.BackgroundProperty,
-                new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)), "Bd"));
-            tpl.Triggers.Add(hov);
-
-            var dis = new Trigger { Property = MenuItem.IsEnabledProperty, Value = false };
-            dis.Setters.Add(new Setter(MenuItem.ForegroundProperty,
-                new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55))));
-            tpl.Triggers.Add(dis);
-
-            return tpl;
-        }
-
-        // Шаблон для подменю (со стрелкой и Popup)
-        private static ControlTemplate BuildMniSubTemplate()
         {
             var tpl = new ControlTemplate(typeof(MenuItem));
             var bd  = new FrameworkElementFactory(typeof(Border));
             bd.Name = "Bd";
             bd.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
             bd.SetValue(Border.PaddingProperty,    new Thickness(12, 6, 24, 6));
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.ContentSourceProperty,    "Header");
+            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            bd.AppendChild(cp);
+            tpl.VisualTree = bd;
+            var hov = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
+            hov.Setters.Add(new Setter(Border.BackgroundProperty,
+                new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)), "Bd"));
+            tpl.Triggers.Add(hov);
+            var dis = new Trigger { Property = MenuItem.IsEnabledProperty, Value = false };
+            dis.Setters.Add(new Setter(MenuItem.ForegroundProperty,
+                new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55))));
+            tpl.Triggers.Add(dis);
+            return tpl;
+        }
 
+        private static ControlTemplate BuildMniSubTemplate()
+        {
+            var tpl  = new ControlTemplate(typeof(MenuItem));
+            var bd   = new FrameworkElementFactory(typeof(Border));
+            bd.Name  = "Bd";
+            bd.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
+            bd.SetValue(Border.PaddingProperty,    new Thickness(12, 6, 24, 6));
             var grid = new FrameworkElementFactory(typeof(Grid));
             var c0   = new FrameworkElementFactory(typeof(ColumnDefinition));
             c0.SetValue(ColumnDefinition.WidthProperty, new GridLength(1, GridUnitType.Star));
             var c1   = new FrameworkElementFactory(typeof(ColumnDefinition));
             c1.SetValue(ColumnDefinition.WidthProperty, GridLength.Auto);
             grid.AppendChild(c0); grid.AppendChild(c1);
-
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
             cp.SetValue(Grid.ColumnProperty, 0);
-            cp.SetValue(ContentPresenter.ContentSourceProperty, "Header");
+            cp.SetValue(ContentPresenter.ContentSourceProperty,    "Header");
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             grid.AppendChild(cp);
-
             var arrow = new FrameworkElementFactory(typeof(TextBlock));
             arrow.SetValue(Grid.ColumnProperty, 1);
-            arrow.SetValue(TextBlock.TextProperty, "›");
-            arrow.SetValue(TextBlock.ForegroundProperty,
-                new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85)));
-            arrow.SetValue(TextBlock.FontSizeProperty, 14.0);
+            arrow.SetValue(TextBlock.TextProperty,       "›");
+            arrow.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85)));
+            arrow.SetValue(TextBlock.FontSizeProperty,   14.0);
             arrow.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
             arrow.SetValue(FrameworkElement.MarginProperty, new Thickness(6, 0, 0, 0));
             grid.AppendChild(arrow);
-
             var popup = new FrameworkElementFactory(typeof(Popup));
-            popup.SetValue(Popup.PlacementProperty, PlacementMode.Right);
+            popup.SetValue(Popup.PlacementProperty,        PlacementMode.Right);
             popup.SetValue(Popup.AllowsTransparencyProperty, true);
-            popup.SetValue(Popup.FocusableProperty, false);
+            popup.SetValue(Popup.FocusableProperty,        false);
             popup.SetBinding(Popup.IsOpenProperty,
-                new Binding("IsSubmenuOpen")
-                { RelativeSource = RelativeSource.TemplatedParent });
+                new Binding("IsSubmenuOpen") { RelativeSource = RelativeSource.TemplatedParent });
             var popBd = new FrameworkElementFactory(typeof(Border));
-            popBd.SetValue(Border.BackgroundProperty,
-                new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
-            popBd.SetValue(Border.BorderBrushProperty,
-                new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C)));
+            popBd.SetValue(Border.BackgroundProperty,      new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)));
+            popBd.SetValue(Border.BorderBrushProperty,     new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C)));
             popBd.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-            popBd.SetValue(Border.PaddingProperty, new Thickness(0, 4, 0, 4));
+            popBd.SetValue(Border.PaddingProperty,         new Thickness(0, 4, 0, 4));
             popBd.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
             popup.AppendChild(popBd);
             grid.AppendChild(popup);
-
             bd.AppendChild(grid);
             tpl.VisualTree = bd;
-
             var hov = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
             hov.Setters.Add(new Setter(Border.BackgroundProperty,
                 new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)), "Bd"));
             tpl.Triggers.Add(hov);
-
             return tpl;
         }
 
@@ -608,7 +559,6 @@ namespace LamFiler
                 Margin = new Thickness(0, 0, 6, 0)
             });
             panel.Children.Add(new TextBlock { Text = header, VerticalAlignment = VerticalAlignment.Center });
-
             var m = new MenuItem
             {
                 Header = panel, IsEnabled = enabled,
@@ -631,7 +581,6 @@ namespace LamFiler
                 Margin = new Thickness(0, 0, 6, 0)
             });
             panel.Children.Add(new TextBlock { Text = header, VerticalAlignment = VerticalAlignment.Center });
-
             var m = new MenuItem
             {
                 Header = panel,
@@ -645,12 +594,14 @@ namespace LamFiler
         }
 
         // ════════════════════════════════════════════════════════════════════
-        //  ФАЙЛОВЫЕ ОПЕРАЦИИ (Ctrl+C / Ctrl+V / Delete / Ctrl+X)
+        //  ФАЙЛОВЫЕ ОПЕРАЦИИ (Ctrl+C / Ctrl+X / Ctrl+V / Delete)
         // ════════════════════════════════════════════════════════════════════
 
-        private List<string> _clipboard      = new();
-        private bool         _clipboardCut   = false;
-        private int          _lastArrowDirection = 0; // 1 = вниз, -1 = вверх
+        private List<string>   _clipboard          = new();
+        private bool           _clipboardCut       = false;
+        private int            _lastArrowDirection = 0;
+        private FileItem?      _hoveredItem;
+        private PreviewWindow? _previewWindow;
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
@@ -660,22 +611,32 @@ namespace LamFiler
             {
                 _lastArrowDirection = 1;
                 var i = FileList.SelectedIndex;
-                if (i < FileList.Items.Count - 1)
-                {
-                    FileList.SelectedIndex = i + 1;
-                    ScrollIfNeeded(i + 1);
-                }
+                if (i < FileList.Items.Count - 1) { FileList.SelectedIndex = i + 1; ScrollIfNeeded(i + 1); }
                 e.Handled = true;
             }
             else if (e.Key == Key.Up)
             {
                 _lastArrowDirection = -1;
                 var i = FileList.SelectedIndex;
-                if (i > 0)
-                {
-                    FileList.SelectedIndex = i - 1;
-                    ScrollIfNeeded(i - 1);
-                }
+                if (i > 0) { FileList.SelectedIndex = i - 1; ScrollIfNeeded(i - 1); }
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Space)
+            {
+                var target = (_hoveredItem != null && !_hoveredItem.IsDir)
+                    ? _hoveredItem
+                    : FileList.SelectedItems.Cast<FileItem>().FirstOrDefault(f => !f.IsDir);
+                if (target != null && _previewWindow == null)
+                    OpenPreview(target.FullPath);
+                e.Handled = true;
+            }
+        }
+
+        private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Space && _previewWindow != null)
+            {
+                _previewWindow.Close();
                 e.Handled = true;
             }
         }
@@ -686,23 +647,55 @@ namespace LamFiler
             {
                 var count = FileList.Items.Count;
                 if (index < 0 || index >= count) return;
-
-                // При движении вниз — показываем на один пункт вперёд
-                // При движении вверх — показываем на один пункт назад
                 var anchor = _lastArrowDirection == 1
                     ? Math.Min(index + 1, count - 1)
                     : Math.Max(index - 1, 0);
-
                 FileList.ScrollIntoView(FileList.Items[anchor]);
             }, System.Windows.Threading.DispatcherPriority.Background);
         }
 
+        private void OpenPreview(string path)
+        {
+            _previewWindow = new PreviewWindow(path) { Owner = this };
+            _previewWindow.Closed += (_, _) => _previewWindow = null;
+            _previewWindow.PreviewKeyUp += (_, e) =>
+            {
+                if (e.Key == Key.Space) { _previewWindow?.Close(); e.Handled = true; }
+            };
+            _previewWindow.Show();
+        }
+
+        private void AttachHoverTracking()
+        {
+            FileList.MouseMove  -= FileList_MouseMove;
+            FileList.MouseMove  += FileList_MouseMove;
+            FileList.MouseLeave -= FileList_MouseLeave;
+            FileList.MouseLeave += FileList_MouseLeave;
+        }
+
+        private void FileList_MouseMove(object sender, MouseEventArgs e)
+        {
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
+                {
+                    _hoveredItem = fi;
+                    if (_previewWindow != null && !fi.IsDir)
+                        _previewWindow.NavigateTo(fi.FullPath);
+                    return;
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            _hoveredItem = null;
+        }
+
+        private void FileList_MouseLeave(object sender, MouseEventArgs e)
+            => _hoveredItem = null;
+
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
-            // Игнорируем если фокус в поле поиска
             if (SearchBox.IsFocused) return;
-
-            // Стрелки обрабатываются в Window_PreviewKeyDown
 
             var selected = FileList.SelectedItems.Cast<FileItem>().ToList();
 
@@ -715,11 +708,9 @@ namespace LamFiler
             }
             else if (e.Key == Key.X && Keyboard.Modifiers == ModifierKeys.Control && selected.Count > 0)
             {
-                // Сбрасываем предыдущую пометку
                 ResetCutMarks();
                 _clipboard    = selected.Select(f => f.FullPath).ToList();
                 _clipboardCut = true;
-                // Помечаем вырезанные серым
                 foreach (var f in selected) f.Opacity = 0.35;
                 FileList.Items.Refresh();
                 e.Handled = true;
@@ -751,11 +742,8 @@ namespace LamFiler
                 {
                     var name = System.IO.Path.GetFileName(src);
                     var dst  = System.IO.Path.Combine(_currentPath, name);
-
-                    // Если уже есть — добавляем постфикс
                     if (File.Exists(dst) || Directory.Exists(dst))
                         dst = GetUniquePath(dst);
-
                     if (Directory.Exists(src))
                     {
                         CopyDirectory(src, dst);
@@ -773,7 +761,6 @@ namespace LamFiler
                         MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
-
             if (_clipboardCut) _clipboard.Clear();
             ResetCutMarks();
             LoadDirectory(_currentPath);
@@ -781,17 +768,12 @@ namespace LamFiler
 
         private void DeleteFiles(List<FileItem> items)
         {
-            var names = items.Count == 1
-                ? $"\"{items[0].Name}\""
-                : $"{items.Count} файлов";
-
-            var dlg = new DeleteConfirmWindow($"Удалить {names}?") { Owner = this };
+            var names = items.Count == 1 ? $"\"{items[0].Name}\"" : $"{items.Count} файлов";
+            var dlg   = new DeleteConfirmWindow($"Удалить {names}?") { Owner = this };
             dlg.ShowDialog();
             if (!dlg.Confirmed) return;
 
-            // Запоминаем индекс первого выделенного
             var firstIndex = FileList.SelectedIndex;
-
             _suppressWatcher = true;
             if (_watcher != null) _watcher.EnableRaisingEvents = false;
             foreach (var item in items)
@@ -810,7 +792,6 @@ namespace LamFiler
             _suppressWatcher = false;
             if (_watcher != null) _watcher.EnableRaisingEvents = true;
 
-            // Ставим фокус через Dispatcher — после того как все события UI отработают
             var targetIndex = firstIndex;
             LoadDirectory(_currentPath);
             Dispatcher.InvokeAsync(() =>
@@ -932,7 +913,7 @@ namespace LamFiler
                 Text = label, FontSize = 13, VerticalAlignment = VerticalAlignment.Center,
                 Foreground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85))
             });
-            btn.Content = panel;
+            btn.Content    = panel;
             btn.Click      += (_, _) => { if (btn.Tag is string p) Navigate(p); };
             btn.MouseEnter += (_, _) => btn.Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D));
             btn.MouseLeave += (_, _) => btn.Background = Brushes.Transparent;
@@ -973,8 +954,8 @@ namespace LamFiler
 
         private static string FormatSize(long bytes)
         {
-            if (bytes < 1024)            return $"{bytes} B";
-            if (bytes < 1024 * 1024)     return $"{bytes / 1024.0:F1} KB";
+            if (bytes < 1024)                return $"{bytes} B";
+            if (bytes < 1024 * 1024)         return $"{bytes / 1024.0:F1} KB";
             if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
             return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
         }
