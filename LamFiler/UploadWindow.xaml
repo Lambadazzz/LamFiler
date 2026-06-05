@@ -1,0 +1,58 @@
+<Window x:Class="LamFiler.UploadWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Загрузка на Google Drive"
+        Width="400" Height="180"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#1E1E1E"
+        Foreground="#CCCCCC">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="12"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="TitleText" Grid.Row="0"
+                   Text="Подготовка..." FontSize="13"
+                   Foreground="#CCCCCC" TextTrimming="CharacterEllipsis"/>
+
+        <ProgressBar x:Name="ProgressBar" Grid.Row="2"
+                     Height="6" Minimum="0" Maximum="100"
+                     Background="#3C3C3C" Foreground="#0078D4"
+                     BorderThickness="0"/>
+
+        <TextBlock x:Name="StatusText" Grid.Row="4"
+                   Text="0%" FontSize="11"
+                   Foreground="#858585"/>
+
+        <Button x:Name="BtnCancel" Grid.Row="6"
+                Content="Отмена" Width="80" Height="28"
+                HorizontalAlignment="Right"
+                Click="BtnCancel_Click"
+                Background="#2D2D2D" Foreground="#CCCCCC"
+                BorderBrush="#3C3C3C" BorderThickness="1"
+                Cursor="Hand">
+            <Button.Template>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="#3A3A3C"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Button.Template>
+        </Button>
+    </Grid>
+</Window>

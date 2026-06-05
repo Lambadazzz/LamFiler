@@ -1,0 +1,12 @@
+[
+  {
+    "label": "Открыть в терминале",
+    "command": "powershell.exe",
+    "args": "-NoExit -Command \"Set-Location '{path}'\""
+  },
+  {
+    "label": "Скопировать путь",
+    "command": "__copy_path__",
+    "args": "{path}"
+  }
+]

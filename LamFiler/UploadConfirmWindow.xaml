@@ -1,0 +1,99 @@
+<Window x:Class="LamFiler.UploadConfirmWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Загрузка папки"
+        Width="420" Height="240"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#1E1E1E"
+        Foreground="#CCCCCC">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="10"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Название папки -->
+        <TextBlock x:Name="FolderNameText" Grid.Row="0"
+                   FontSize="14" FontWeight="Medium"
+                   Foreground="#CCCCCC" TextTrimming="CharacterEllipsis"/>
+
+        <!-- Статистика -->
+        <Border Grid.Row="2" Background="#252526"
+                BorderBrush="#3C3C3C" BorderThickness="1"
+                CornerRadius="6" Padding="14,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Файлов" FontSize="11" Foreground="#858585"/>
+                    <TextBlock x:Name="FileCountText" FontSize="18" FontWeight="Medium"
+                               Foreground="#CCCCCC" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                    <TextBlock Text="Общий размер" FontSize="11" Foreground="#858585"/>
+                    <TextBlock x:Name="TotalSizeText" FontSize="18" FontWeight="Medium"
+                               Foreground="#CCCCCC" Margin="0,2,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Чекбокс архива -->
+        <CheckBox x:Name="ChkArchive" Grid.Row="4"
+                  Content="📦  Упаковать в .zip перед загрузкой"
+                  FontSize="13" Foreground="#CCCCCC"
+                  IsChecked="False"/>
+
+        <!-- Кнопки -->
+        <StackPanel Grid.Row="6" Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button x:Name="BtnCancel" Content="Отмена"
+                    Width="80" Height="28" Margin="0,0,8,0"
+                    Click="BtnCancel_Click"
+                    Background="#2D2D2D" Foreground="#CCCCCC"
+                    BorderBrush="#3C3C3C" BorderThickness="1" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#3A3A3C"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+            <Button x:Name="BtnUpload" Content="☁  Загрузить"
+                    Width="110" Height="28"
+                    Click="BtnUpload_Click"
+                    Background="#0078D4" Foreground="White"
+                    BorderThickness="0" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#1084D8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>
