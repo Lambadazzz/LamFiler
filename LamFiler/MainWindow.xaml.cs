@@ -1,7 +1,11 @@
 using LamFiler.Models;
 using LamFiler.Services;
+using static LamFiler.Services.FileActionType;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -11,22 +15,79 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using Path = System.IO.Path;
 
 namespace LamFiler
 {
     public partial class MainWindow : Window
     {
-        public class FileItem
+        public class FileItem : INotifyPropertyChanged
         {
-            public string Name      { get; set; } = "";
-            public string Icon      { get; set; } = "";
-            public string IconColor { get; set; } = "#858585";
+            public event PropertyChangedEventHandler? PropertyChanged;
+            private void N([CallerMemberName] string? p = null)
+                => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(p));
+
             public string Modified  { get; set; } = "";
             public string Size      { get; set; } = "";
-            public string TypeExt   { get; set; } = "";
             public string FullPath  { get; set; } = "";
             public bool   IsDir     { get; set; }
-            public double Opacity   { get; set; } = 1.0;
+
+            private string _icon = "";
+            public string Icon
+            {
+                get => _icon;
+                set { _icon = value; N(); }
+            }
+
+            private string _iconColor = "#858585";
+            public string IconColor
+            {
+                get => _iconColor;
+                set { _iconColor = value; N(); }
+            }
+
+            private string _typeExt = "";
+            public string TypeExt
+            {
+                get => _typeExt;
+                set { _typeExt = value; N(); }
+            }
+
+            private string _name = "";
+            public string Name
+            {
+                get => _name;
+                set { _name = value; N(); }
+            }
+
+            private double _opacity = 1.0;
+            public double Opacity
+            {
+                get => _opacity;
+                set { _opacity = value; N(); }
+            }
+
+            private bool _isRenaming;
+            public bool IsRenaming
+            {
+                get => _isRenaming;
+                set { _isRenaming = value; N(); }
+            }
+
+            private string _editName = "";
+            public string EditName
+            {
+                get => _editName;
+                set { _editName = value; N(); }
+            }
+
+            private bool _isDragTarget;
+            public bool IsDragTarget
+            {
+                get => _isDragTarget;
+                set { _isDragTarget = value; N(); }
+            }
         }
 
         public class BreadcrumbPart
@@ -137,8 +198,9 @@ namespace LamFiler
                 : _allItems.Where(f =>
                     f.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                     f.TypeExt.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-            FileList.ItemsSource = filtered;
-            StatusLeft.Text = $"{filtered.Count} items";
+            var sorted = ApplySort(filtered).ToList();
+            FileList.ItemsSource = sorted;
+            StatusLeft.Text = $"{sorted.Count} items";
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -160,8 +222,15 @@ namespace LamFiler
 
         private bool _suppressWatcher = false;
 
+        private System.Threading.Timer? _watcherDebounce;
+
         private void OnFsChanged(object sender, FileSystemEventArgs e)
-            => Dispatcher.InvokeAsync(() => { if (!_suppressWatcher) LoadDirectory(_currentPath); });
+        {
+            _watcherDebounce?.Dispose();
+            _watcherDebounce = new System.Threading.Timer(_ =>
+                Dispatcher.InvokeAsync(() => { if (!_suppressWatcher) LoadDirectory(_currentPath); }),
+                null, 150, System.Threading.Timeout.Infinite);
+        }
 
         // ════════════════════════════════════════════════════════════════════
         //  BREADCRUMB
@@ -402,11 +471,25 @@ namespace LamFiler
             }
             else if (item != null)
             {
-                menu.Items.Add(Mni("▶", "Открыть", () =>
+                // Для .exe/.msi — "Открыть" становится подменю
+                if (!item.IsDir && item.TypeExt is ".exe" or ".msi")
                 {
-                    if (item.IsDir) Navigate(item.FullPath);
-                    else FileContextMenuService.OpenDefault(item.FullPath);
-                }));
+                    var subRun = MniSubClickable("▶", "Запустить",
+                        () => FileContextMenuService.OpenDefault(item.FullPath));
+                    subRun.Items.Add(Mni("🛡", "Запустить от имени администратора",
+                        () => RunAsAdmin(item.FullPath)));
+                    menu.Items.Add(subRun);
+                }
+                else
+                {
+                    menu.Items.Add(Mni("▶", "Открыть", () =>
+                    {
+                        if (item.IsDir) Navigate(item.FullPath);
+                        else FileContextMenuService.OpenDefault(item.FullPath);
+                    }));
+                }
+
+                menu.Items.Add(Mni("✏", "Переименовать", () => StartRename(item)));
 
                 var apps = FileContextMenuService.GetOpenWithApps(item.FullPath);
                 if (apps.Count > 0)
@@ -445,6 +528,8 @@ namespace LamFiler
                     () => FileContextMenuService.RevealInExplorer(item.FullPath)));
                 menu.Items.Add(Mni("📋", "Копировать путь",
                     () => FileContextMenuService.CopyPath(item.FullPath)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(BuildCreateSubmenu());
             }
             else
             {
@@ -455,6 +540,8 @@ namespace LamFiler
                         _currentPath)));
                 menu.Items.Add(Mni("📋", "Копировать путь папки",
                     () => FileContextMenuService.CopyPath(_currentPath)));
+                menu.Items.Add(new Separator());
+                menu.Items.Add(BuildCreateSubmenu());
             }
 
             menu.PlacementTarget = FileList;
@@ -570,6 +657,48 @@ namespace LamFiler
             return m;
         }
 
+        private static MenuItem MniSubClickable(string icon, string header, Action onClick)
+        {
+            // Используем стандартный MniSub (с Items и рабочим попапом).
+            // Клик по левой зоне (icon+text) перехватываем через PreviewMouseLeftButtonUp
+            // на panel, проверяя что клик не по стрелке.
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            panel.Children.Add(new TextBlock
+            {
+                Text = icon, FontSize = 13, Width = 20,
+                TextAlignment = TextAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0)
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = header,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var m = MniSub(icon, header);
+
+            // Перехватываем клик по Header — если клик пришёл не по стрелке (x < ActualWidth - 24), запускаем
+            m.PreviewMouseLeftButtonUp += (_, e) =>
+            {
+                // Определяем позицию клика относительно MenuItem
+                var pos = e.GetPosition(m);
+                // Правая зона ~24px — стрелка › (задаётся padding в шаблоне)
+                if (pos.X < m.ActualWidth - 24)
+                {
+                    m.IsSubmenuOpen = false;
+                    var cm = m.Parent as ContextMenu
+                           ?? ItemsControl.ItemsControlFromItemContainer(m) as ContextMenu;
+                    if (cm != null) cm.IsOpen = false;
+                    onClick();
+                    e.Handled = true;
+                }
+                // Если клик по стрелке — просто открываем подменю
+            };
+
+            return m;
+        }
+
         private static MenuItem MniSub(string icon, string header)
         {
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
@@ -594,6 +723,920 @@ namespace LamFiler
         }
 
         // ════════════════════════════════════════════════════════════════════
+        //  DRAG & DROP
+        // ════════════════════════════════════════════════════════════════════
+
+        private Point   _dragStart;
+        private bool    _dragPending;
+        private FileItem? _dragItem;
+
+        // ─── Rubber-band выделение ───────────────────────────────────────────
+        private bool    _rubberActive;   // идёт rubber-band (drag из checkbox-зоны)
+        private int     _rubberAnchor;   // индекс строки, с которой начали drag
+
+        private bool IsCheckZoneClick(MouseButtonEventArgs e)
+        {
+            // Ищем ListViewItem в дереве и проверяем X-позицию клика.
+            // Левые 28px (ColumnDefinition Width="28") — это зона чекбокса.
+            // Такой подход устойчив к прозрачному оверлею ZIndex=99, который
+            // перехватывает hit-test и скрывает нижележащие элементы.
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi)
+                {
+                    var pos = e.GetPosition(lvi);
+                    return pos.X >= 0 && pos.X < 28;
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            return false;
+        }
+
+        private FileItem? HitTestItem(Point posInList)
+        {
+            var hit = VisualTreeHelper.HitTest(FileList, posInList)?.VisualHit as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi && lvi.Content is FileItem fi) return fi;
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            return null;
+        }
+
+        // Нужно ли при MouseUp применить стандартное выделение (клик без drag по уже выделенному)
+        private FileItem? _pendingSelectItem;
+
+        private void FileList_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            _dragStart      = e.GetPosition(null);
+            _dragPending    = false;
+            _dragItem       = null;
+            _rubberActive   = false;
+            _pendingSelectItem = null;
+
+            // Клик по checkbox-зоне: toggle-выделение + начало rubber-band
+            if (IsCheckZoneClick(e))
+            {
+                var hit = e.OriginalSource as DependencyObject;
+                FileItem? clickedItem = null;
+                while (hit != null)
+                {
+                    if (hit is ListViewItem lvi && lvi.Content is FileItem fi) { clickedItem = fi; break; }
+                    hit = VisualTreeHelper.GetParent(hit);
+                }
+
+                if (clickedItem != null)
+                {
+                    // Toggle
+                    if (FileList.SelectedItems.Contains(clickedItem))
+                        FileList.SelectedItems.Remove(clickedItem);
+                    else
+                        FileList.SelectedItems.Add(clickedItem);
+
+                    // Индекс для rubber-band anchor
+                    _rubberAnchor = (FileList.ItemsSource as List<FileItem>)?.IndexOf(clickedItem) ?? -1;
+                    _rubberActive = true;
+                    FileList.Focus();
+                }
+                e.Handled = true;
+                return;
+            }
+
+            // Обычный клик — ищем FileItem под курсором
+            var hitEl = e.OriginalSource as DependencyObject;
+            while (hitEl != null)
+            {
+                if (hitEl is ListViewItem lvi && lvi.Content is FileItem fi)
+                {
+                    _dragItem    = fi;
+                    _dragPending = true;
+
+                    // Если кликнули на уже выделенный элемент (множественное выделение) —
+                    // блокируем ListView от немедленного сброса выделения.
+                    // Настоящее выделение применим в MouseUp если drag не начался.
+                    if (FileList.SelectedItems.Count > 1 && FileList.SelectedItems.Contains(fi))
+                    {
+                        _pendingSelectItem = fi;
+                        e.Handled = true;
+                    }
+                    break;
+                }
+                hitEl = VisualTreeHelper.GetParent(hitEl);
+            }
+        }
+
+        private void FileList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // Если drag не начался, а клик был по уже выделенному элементу —
+            // применяем стандартное одиночное выделение.
+            if (_pendingSelectItem != null && !_isDragging)
+            {
+                FileList.SelectedItems.Clear();
+                FileList.SelectedItem = _pendingSelectItem;
+            }
+            _pendingSelectItem = null;
+        }
+
+        private bool _isDragging; // true пока DoDragDrop не вернул управление
+
+        private void  FileList_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (_isDragging) return; // DoDragDrop ещё не завершён — игнорируем все MouseMove
+
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                _dragPending  = false;
+                _rubberActive = false;
+                return;
+            }
+
+            // ─── Rubber-band: drag из checkbox-зоны ───────────────────────────
+            if (_rubberActive && _rubberAnchor >= 0)
+            {
+                var rbItems = FileList.ItemsSource as List<FileItem>;
+                if (rbItems == null) return;
+
+                var posInList = e.GetPosition(FileList);
+                var hovered   = HitTestItem(posInList);
+                int hoverIdx  = hovered != null ? rbItems.IndexOf(hovered) : -1;
+
+                if (hoverIdx < 0) return;
+
+                int from = Math.Min(_rubberAnchor, hoverIdx);
+                int to   = Math.Max(_rubberAnchor, hoverIdx);
+
+                // Обновляем выделение: все в диапазоне выделяем
+                FileList.SelectionChanged -= FileList_SelectionChanged;
+                FileList.SelectedItems.Clear();
+                for (int i = from; i <= to; i++)
+                    FileList.SelectedItems.Add(rbItems[i]);
+                FileList.SelectionChanged += FileList_SelectionChanged;
+                StatusLeft.Text = $"{to - from + 1} selected";
+
+                e.Handled = true;
+                return;
+            }
+
+            // ─── Обычный drag файлов ─────────────────────────────────
+            if (!_dragPending || _dragItem == null) return;
+            if (_renamingItem != null) { _dragPending = false; return; }
+
+            var pos  = e.GetPosition(null);
+            var diff = pos - _dragStart;
+            if (Math.Abs(diff.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(diff.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            // Сбрасываем до DoDragDrop, чтобы повторный вход в метод был невозможен
+            _dragPending = false;
+            var dragItem = _dragItem;
+            _dragItem = null;
+
+            var items = FileList.SelectedItems.Contains(dragItem)
+                ? FileList.SelectedItems.Cast<FileItem>().Select(f => f.FullPath).ToArray()
+                : new[] { dragItem.FullPath };
+
+            var data = new DataObject(DataFormats.FileDrop, items);
+            _isDragging = true;
+            try
+            {
+                DragDrop.DoDragDrop(FileList, data, DragDropEffects.Copy | DragDropEffects.Move);
+            }
+            finally
+            {
+                _isDragging = false;
+            }
+        }
+
+        private FileItem? _dragTargetItem;
+        private ListViewItem? _dragTargetLvi;
+        private static readonly SolidColorBrush _brushDragTarget = new(Color.FromArgb(0x40, 0x00, 0x78, 0xD4));
+
+        private void SetDragTarget(FileItem? item)
+        {
+            // Находим LVI для нового item
+            ListViewItem? newLvi = item != null
+                ? FileList.ItemContainerGenerator.ContainerFromItem(item) as ListViewItem
+                : null;
+
+            // Если LVI не изменился — ничего не делаем (курсор внутри одной строки)
+            if (newLvi == _dragTargetLvi) return;
+
+            if (_dragTargetLvi != null) { _dragTargetLvi.Background = Brushes.Transparent; }
+            _dragTargetItem = item;
+            _dragTargetLvi  = newLvi;
+            if (newLvi != null) newLvi.Background = _brushDragTarget;
+        }
+
+        private bool _dragOverFileDrop; // кэш: источник содержит FileDrop (проверяем один раз при входе)
+
+        private void FileList_DragOver(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            // ── Обновляем подсветку только при смене строки ──────────────────
+            var hit = e.OriginalSource as DependencyObject;
+            ListViewItem? hoveredLvi = null;
+            FileItem?     hoveredItem = null;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
+                {
+                    hoveredLvi  = lvi;
+                    hoveredItem = fi;
+                    break;
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+
+            if (hoveredLvi != _dragTargetLvi)
+            {
+                if (_dragTargetLvi != null) _dragTargetLvi.Background = Brushes.Transparent;
+                _dragTargetLvi  = hoveredLvi;
+                _dragTargetItem = hoveredItem;
+
+                if (hoveredLvi != null && hoveredItem != null)
+                {
+                    var ext = hoveredItem.IsDir ? "" : Path.GetExtension(hoveredItem.FullPath).ToLowerInvariant();
+                    if (hoveredItem.IsDir || ext is ".zip" or ".rar" or ".7z")
+                        hoveredLvi.Background = _brushDragTarget;
+                }
+
+                // Фон списка — меняем только при реальной смене строки
+                var newBg = hoveredLvi == null ? _brushListHighlight : _brushListNormal;
+                if (!ReferenceEquals(FileList.Background, newBg))
+                    FileList.Background = newBg;
+            }
+
+            // ── Определяем эффект (без GetData — только по кэшированному hoveredItem) ──
+            if (hoveredItem != null && !hoveredItem.IsDir)
+            {
+                var ext = Path.GetExtension(hoveredItem.FullPath).ToLowerInvariant();
+                if (ext is ".zip" or ".rar" or ".7z")
+                {
+                    e.Effects = DragDropEffects.Copy;
+                    e.Handled = true;
+                    return;
+                }
+            }
+
+            // Дроп в текущую папку — проверяем источники только если цель == currentPath
+            if (hoveredItem == null)
+            {
+                // Вызываем GetData только один раз за «сессию» над пустым местом
+                if (!_dragOverFileDrop)
+                {
+                    _dragOverFileDrop = true;
+                    var sources = e.Data.GetData(DataFormats.FileDrop) as string[];
+                    if (sources != null &&
+                        sources.All(s => (Path.GetDirectoryName(s) ?? "").Equals(_currentPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        e.Effects = DragDropEffects.None;
+                        e.Handled = true;
+                        return;
+                    }
+                }
+            }
+            else
+            {
+                _dragOverFileDrop = false; // сбрасываем при наведении на элемент
+            }
+
+            e.Effects = (e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                ? DragDropEffects.Copy : DragDropEffects.Move;
+            e.Handled = true;
+        }
+
+        private void FileList_DragLeave(object sender, DragEventArgs e)
+        {
+            SetDragTarget(null);
+            FileList.Background = _brushListNormal;
+            _dragOverFileDrop = false;
+        }
+
+        private void FileList_Drop(object sender, DragEventArgs e)
+        {
+            SetDragTarget(null);
+            FileList.Background = _brushListNormal;
+
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (sources == null || sources.Length == 0) return;
+
+            var targetDir = GetDropTargetDir(e, out var targetItem);
+
+            // Если дроп на архивный файл — добавляем файлы в архив
+            if (targetItem != null && !targetItem.IsDir)
+            {
+                var ext = Path.GetExtension(targetItem.FullPath).ToLowerInvariant();
+                if (ext is ".zip" or ".rar" or ".7z")
+                {
+                    DropIntoArchive(sources, targetItem.FullPath, ext);
+                    return;
+                }
+            }
+
+            var isCopy = (e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                      || e.AllowedEffects == DragDropEffects.Copy;
+
+            // Если дроп в папку — передаём её путь для выделения после перезагрузки
+            string? selectAfterPath = (targetItem != null && targetItem.IsDir) ? targetItem.FullPath : null;
+
+            DropFiles(sources, targetDir, isCopy, selectAfterPath);
+        }
+
+        private async void DropIntoArchive(string[] sources, string archivePath, string ext)
+        {
+            if (ext == ".zip")
+            {
+                await Task.Run(() =>
+                {
+                    using var zip = System.IO.Compression.ZipFile.Open(
+                        archivePath, System.IO.Compression.ZipArchiveMode.Update);
+                    foreach (var src in sources)
+                    {
+                        if (File.Exists(src))
+                            AddFileToZip(zip, src, Path.GetFileName(src));
+                        else if (Directory.Exists(src))
+                            AddDirectoryToZip(zip, src, Path.GetFileName(src));
+                    }
+                });
+            }
+            else if (ext is ".rar" or ".7z")
+            {
+                var winrar = FindWinRar();
+                if (winrar == null)
+                {
+                    MessageBox.Show("Не найден WinRAR. Установите WinRAR для работы с RAR/7z архивами.",
+                        "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                var fileArgs = string.Join(" ", sources.Select(s => $"\"{s}\""));
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = winrar,
+                    Arguments       = $"a -ep1 \"{archivePath}\" {fileArgs}",
+                    UseShellExecute = false,
+                    CreateNoWindow  = true,
+                    WindowStyle     = System.Diagnostics.ProcessWindowStyle.Hidden
+                };
+                var proc = System.Diagnostics.Process.Start(psi);
+                if (proc != null) await Task.Run(() => proc.WaitForExit());
+            }
+
+            // Обновляем только Size и Modified у архива — без перезагрузки списка
+            _suppressWatcher = true;
+            var archive = (FileList.ItemsSource as List<FileItem>)
+                ?.FirstOrDefault(f => f.FullPath.Equals(archivePath, StringComparison.OrdinalIgnoreCase));
+            if (archive != null)
+            {
+                var info = new FileInfo(archivePath);
+                archive.Size     = FormatSize(info.Length);
+                archive.Modified = info.LastWriteTime.ToString("dd MMM  HH:mm");
+                FileList.SelectedItem = archive;
+                // Сбрасываем суппрессию через небольшую задержку (чтобы Watcher успел отстрелять)
+                await Task.Delay(300);
+            }
+            _suppressWatcher = false;
+        }
+
+        private static void AddFileToZip(
+            System.IO.Compression.ZipArchive zip, string filePath, string entryName)
+        {
+            var entry = zip.CreateEntry(entryName, System.IO.Compression.CompressionLevel.Optimal);
+            using var entryStream = entry.Open();
+            using var fileStream  = File.OpenRead(filePath);
+            fileStream.CopyTo(entryStream);
+        }
+
+        private static void AddDirectoryToZip(
+            System.IO.Compression.ZipArchive zip, string srcDir, string entryPrefix)
+        {
+            foreach (var file in Directory.GetFiles(srcDir))
+                AddFileToZip(zip, file, entryPrefix + "/" + Path.GetFileName(file));
+            foreach (var sub in Directory.GetDirectories(srcDir))
+                AddDirectoryToZip(zip, sub, entryPrefix + "/" + Path.GetFileName(sub));
+        }
+
+        // — Breadcrumb —
+        private Button? _highlightedBreadcrumbBtn;
+
+        private Button? GetBreadcrumbButton(DragEventArgs e)
+        {
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is Button btn && btn.Tag is string) return btn;
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            return null;
+        }
+
+        private void SetBreadcrumbHighlight(Button? btn)
+        {
+            if (_highlightedBreadcrumbBtn == btn) return;
+            if (_highlightedBreadcrumbBtn != null)
+                _highlightedBreadcrumbBtn.Foreground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85));
+            _highlightedBreadcrumbBtn = btn;
+            if (_highlightedBreadcrumbBtn != null)
+                _highlightedBreadcrumbBtn.Foreground = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4));
+        }
+
+        private void Breadcrumb_DragOver(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+            var btn = GetBreadcrumbButton(e);
+            SetBreadcrumbHighlight(btn);
+            e.Effects = btn != null
+                ? ((e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                    ? DragDropEffects.Copy : DragDropEffects.Move)
+                : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void Breadcrumb_DragLeave(object sender, DragEventArgs e)
+            => SetBreadcrumbHighlight(null);
+
+        private void Breadcrumb_Drop(object sender, DragEventArgs e)
+        {
+            SetBreadcrumbHighlight(null);
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            var btn = GetBreadcrumbButton(e);
+            if (btn?.Tag is not string targetDir) return;
+            var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (sources == null || sources.Length == 0) return;
+            var isCopy = (e.KeyStates & DragDropKeyStates.ControlKey) != 0;
+            DropFiles(sources, targetDir, isCopy);
+        }
+
+        private async void DropFiles(string[] sources, string targetDir, bool isCopy, string? selectAfterPath = null)
+        {
+            sources = sources
+                .Where(s => !string.Equals(
+                    Path.GetDirectoryName(s), targetDir,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (sources.Length == 0) return;
+
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+            var errors = new List<string>();
+            var moved  = new List<string>(); // пути файлов которые успешно перемещены (Move)
+
+            await Task.Run(() =>
+            {
+                foreach (var src in sources)
+                {
+                    try
+                    {
+                        var name = Path.GetFileName(src);
+                        var dst  = Path.Combine(targetDir, name);
+                        if (File.Exists(dst) || Directory.Exists(dst))
+                            dst = GetUniquePath(dst);
+
+                        if (Directory.Exists(src))
+                        {
+                            CopyDirectory(src, dst);
+                            if (!isCopy) { Directory.Delete(src, recursive: true); moved.Add(src); }
+                        }
+                        else
+                        {
+                            File.Copy(src, dst);
+                            if (!isCopy) { File.Delete(src); moved.Add(src); }
+                        }
+
+                        _undo.Push(new FileAction
+                        {
+                            Type    = isCopy ? FileActionType.Copy : FileActionType.Move,
+                            OldPath = src,
+                            NewPath = dst
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex.Message);
+                    }
+                }
+            });
+
+            if (errors.Count > 0)
+                MessageBox.Show(string.Join("\n", errors), "Lambada",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            if (!isCopy && moved.Count > 0 && selectAfterPath != null)
+            {
+                // Move в папку: убираем перемещённые из списка без перезагрузки
+                var movedSet = new HashSet<string>(moved, StringComparer.OrdinalIgnoreCase);
+                var currentList = FileList.ItemsSource as List<FileItem>;
+                if (currentList != null)
+                {
+                    var newList = currentList.Where(f => !movedSet.Contains(f.FullPath)).ToList();
+                    FileList.SelectionChanged -= FileList_SelectionChanged;
+                    FileList.ItemsSource = newList;
+                    // Выделяем папку-цель
+                    var folder = newList.FirstOrDefault(f => f.FullPath.Equals(selectAfterPath, StringComparison.OrdinalIgnoreCase));
+                    if (folder != null)
+                    {
+                        FileList.SelectedItem = folder;
+                        FileList.ScrollIntoView(folder);
+                    }
+                    FileList.SelectionChanged += FileList_SelectionChanged;
+                    StatusLeft.Text = $"{newList.Count} items";
+                }
+                // Даём Watcher отстрелять и подавляем
+                await Task.Delay(300);
+                _suppressWatcher = false;
+                if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            }
+            else
+            {
+                // Copy или дроп в пустое место: полная перезагрузка
+                _suppressWatcher = false;
+                if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                var sv = FindChild<ScrollViewer>(FileList, "");
+                double scrollOffset = sv?.VerticalOffset ?? 0;
+                LoadDirectory(_currentPath);
+                Dispatcher.InvokeAsync(() =>
+                {
+                    FindChild<ScrollViewer>(FileList, "")?.ScrollToVerticalOffset(scrollOffset);
+                    if (selectAfterPath != null)
+                    {
+                        var folder = (FileList.ItemsSource as List<FileItem>)
+                            ?.FirstOrDefault(f => f.FullPath.Equals(selectAfterPath, StringComparison.OrdinalIgnoreCase));
+                        if (folder != null) { FileList.SelectedItem = folder; FileList.ScrollIntoView(folder); }
+                    }
+                }, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+        }
+
+        // Определяем папку-цель: если курсор над папкой или архивом — этот элемент, иначе — текущая папка
+        private string GetDropTargetDir(DragEventArgs e, out FileItem? targetItem)
+        {
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
+                {
+                    // Папка — обычная цель
+                    if (fi.IsDir) { targetItem = fi; return fi.FullPath; }
+                    // Архив — цель для добавления файлов
+                    var ext = Path.GetExtension(fi.FullPath).ToLowerInvariant();
+                    if (ext is ".zip" or ".rar" or ".7z") { targetItem = fi; return _currentPath; }
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            targetItem = null;
+            return _currentPath;
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  НОВАЯ ПАПКА (Ctrl+N)
+        // ════════════════════════════════════════════════════════════════════
+
+        private void CreateNewFolder()
+        {
+            // Фиксируем активное переименование если есть
+            if (_renamingItem != null) CommitRename();
+
+            // Генерируем уникальное имя
+            var baseName = "Новая папка";
+            var name     = baseName;
+            int i        = 2;
+            while (Directory.Exists(Path.Combine(_currentPath, name)))
+                name = $"{baseName} ({i++})";
+
+            // Создаём временный FileItem без реальной папки — сразу в режиме редактирования
+            var placeholder = new FileItem
+            {
+                Name     = name,
+                EditName = name,
+                Icon     = "📁",
+                IconColor = "#FAC775",
+                Modified = DateTime.Now.ToString("dd MMM  HH:mm"),
+                Size     = "—",
+                TypeExt  = "Folder",
+                FullPath = Path.Combine(_currentPath, name),
+                IsDir    = true,
+                IsRenaming = true
+            };
+
+            // Вставляем в начало списка (папки идут первыми)
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+            var currentList = (FileList.ItemsSource as List<FileItem>) ?? new List<FileItem>();
+            currentList.Insert(0, placeholder);
+            FileList.ItemsSource = null;
+            FileList.ItemsSource = currentList;
+
+            FileList.SelectedItem = placeholder;
+            FileList.ScrollIntoView(placeholder);
+
+            _renamingItem = placeholder;
+
+            // Фокус на TextBox
+            Dispatcher.InvokeAsync(() =>
+            {
+                var lvi = FileList.ItemContainerGenerator.ContainerFromItem(placeholder) as ListViewItem;
+                if (lvi == null) return;
+                var tb = FindChild<TextBox>(lvi, "NameEditor");
+                if (tb == null) return;
+                tb.Focus();
+                tb.SelectAll();
+
+                // Переопределяем KeyDown — при отмене удаляем плейсхолдер без создания папки
+                tb.KeyDown -= RenameBox_KeyDown;
+                tb.LostFocus -= RenameBox_LostFocus;
+                tb.KeyDown += NewFolderBox_KeyDown;
+                tb.LostFocus += NewFolderBox_LostFocus;
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void NewFolderBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Return) { CommitNewFolder(); e.Handled = true; }
+            else if (e.Key == Key.Escape) { CancelNewFolder(); e.Handled = true; }
+        }
+
+        private void NewFolderBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (!_renameCommitting) CommitNewFolder();
+        }
+
+        private void CommitNewFolder()
+        {
+            if (_renamingItem == null || _renameCommitting) return;
+            _renameCommitting = true;
+
+            var placeholder = _renamingItem;
+            var newName     = placeholder.EditName.Trim();
+            _renamingItem   = null;
+            placeholder.IsRenaming = false;
+
+            var bad = Path.GetInvalidFileNameChars();
+            var valid = !string.IsNullOrEmpty(newName) && !newName.Any(c => bad.Contains(c));
+
+            if (valid)
+            {
+                var newPath = Path.Combine(_currentPath, newName);
+                if (Directory.Exists(newPath))
+                {
+                    MessageBox.Show($"Папка \"{newName}\" уже существует.",
+                        "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    valid = false;
+                }
+                else
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(newPath);
+                        _undo.Push(new FileAction
+                        {
+                            Type    = FileActionType.CreateFolder,
+                            OldPath = "",
+                            NewPath = newPath
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Ошибка:\n{ex.Message}",
+                            "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        valid = false;
+                    }
+                }
+            }
+
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            _renameCommitting = false;
+
+            // Перезагружаем директорию и выбираем созданную папку (или убираем placeholder)
+            LoadDirectory(_currentPath);
+            if (valid)
+            {
+                var created = Path.Combine(_currentPath, newName);
+                var items   = FileList.ItemsSource as List<FileItem>;
+                var target  = items?.FirstOrDefault(f => f.FullPath == created);
+                if (target != null)
+                {
+                    FileList.SelectedItem = target;
+                    FileList.ScrollIntoView(target);
+                }
+            }
+            Dispatcher.InvokeAsync(() => FileList.Focus(),
+                System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        private void CancelNewFolder()
+        {
+            if (_renamingItem == null) return;
+            _renamingItem.IsRenaming = false;
+            _renamingItem = null;
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            _renameCommitting = false;
+
+            // Убираем placeholder без создания папки
+            LoadDirectory(_currentPath);
+            Dispatcher.InvokeAsync(() => FileList.Focus(),
+                System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  ПЕРЕИМЕНОВАНИЕ (F2 / ПКМ)
+        // ════════════════════════════════════════════════════════════════════
+
+        private FileItem? _renamingItem;
+        private bool      _renameCommitting;
+
+        private void StartRename(FileItem item)
+        {
+            // Если уже что-то переименовывается — фиксируем
+            if (_renamingItem != null) CommitRename();
+
+            _renamingItem = item;
+            item.EditName  = item.Name;
+            item.IsRenaming = true;
+
+            // Фокус на TextBox после рендера
+            Dispatcher.InvokeAsync(() =>
+            {
+                var lvi = FileList.ItemContainerGenerator
+                    .ContainerFromItem(item) as ListViewItem;
+                if (lvi == null) return;
+                var tb = FindChild<TextBox>(lvi, "NameEditor");
+                if (tb == null) return;
+                tb.Focus();
+                // Выделяем имя без расширения
+                var dot = item.Name.LastIndexOf('.');
+                tb.Select(0, (dot > 0 && !item.IsDir) ? dot : item.Name.Length);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void CommitRename()
+        {
+            if (_renamingItem == null || _renameCommitting) return;
+            _renameCommitting = true;
+
+            var item    = _renamingItem;
+            var newName = item.EditName.Trim();
+            _renamingItem = null;
+            item.IsRenaming = false;
+
+            if (string.IsNullOrEmpty(newName) || newName == item.Name)
+            {
+                _renameCommitting = false;
+                return;
+            }
+
+            // Проверка допустимых символов
+            var bad = System.IO.Path.GetInvalidFileNameChars();
+            if (newName.Any(c => bad.Contains(c)))
+            {
+                MessageBox.Show("Имя содержит недопустимые символы.",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _renameCommitting = false;
+                return;
+            }
+
+            var dir    = System.IO.Path.GetDirectoryName(item.FullPath) ?? _currentPath;
+            var newPath = System.IO.Path.Combine(dir, newName);
+
+            if (File.Exists(newPath) || Directory.Exists(newPath))
+            {
+                MessageBox.Show($"Файл с именем \"{newName}\" уже существует.",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _renameCommitting = false;
+                return;
+            }
+
+            // Предупреждение при смене расширения
+            if (!item.IsDir && _settings.WarnOnExtensionChange)
+            {
+                var oldExt = Path.GetExtension(item.Name).ToLowerInvariant();
+                var newExt = Path.GetExtension(newName).ToLowerInvariant();
+                if (oldExt != newExt)
+                {
+                    var warn = new RenameExtWarningWindow(item.Name, newName) { Owner = this };
+                    warn.ShowDialog();
+                    if (warn.DontAskAgain)
+                    {
+                        _settings.WarnOnExtensionChange = false;
+                        _settings.Save();
+                    }
+                    if (!warn.Confirmed)
+                    {
+                        _renameCommitting = false;
+                        Dispatcher.InvokeAsync(() => FileList.Focus(),
+                            System.Windows.Threading.DispatcherPriority.Input);
+                        return;
+                    }
+                }
+            }
+
+            try
+            {
+                _suppressWatcher = true;
+                if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+                if (item.IsDir) Directory.Move(item.FullPath, newPath);
+                else            File.Move(item.FullPath, newPath);
+
+                _undo.Push(new FileAction
+                {
+                    Type    = FileActionType.Rename,
+                    OldPath = item.FullPath,
+                    NewPath = newPath
+                });
+
+                item.Name     = newName;
+                item.FullPath = newPath;
+
+                // Обновляем иконку, цвет и расширение если файл
+                if (!item.IsDir)
+                {
+                    var newExt    = Path.GetExtension(newName);
+                    item.Icon      = GetFileIcon(newExt);
+                    item.IconColor = GetIconColor(newExt);
+                    item.TypeExt   = newExt.ToLowerInvariant();
+                }
+
+                // Перезагружаем список (чтобы элемент встал на правильное место по сортировке)
+                _suppressWatcher = false;
+                if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                _renameCommitting = false;
+                LoadDirectory(_currentPath);
+                Dispatcher.InvokeAsync(() =>
+                {
+                    var found = (FileList.ItemsSource as List<FileItem>)
+                        ?.FirstOrDefault(f => f.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
+                    if (found != null)
+                    {
+                        FileList.SelectedItem = found;
+                        FileList.ScrollIntoView(found);
+                        ShowPreview(found);
+                    }
+                    FileList.Focus();
+                }, System.Windows.Threading.DispatcherPriority.Loaded);
+                return;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка переименования:\n{ex.Message}",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                _suppressWatcher = false;
+                if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                _renameCommitting = false;
+            }
+        }
+
+        private void CancelRename()
+        {
+            if (_renamingItem == null) return;
+            _renamingItem.IsRenaming = false;
+            _renamingItem = null;
+        }
+
+        private void RenameBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Return) { CommitRename(); e.Handled = true; }
+            else if (e.Key == Key.Escape) { CancelRename(); e.Handled = true; }
+        }
+
+        private void RenameBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            // LostFocus срабатывает и при коммите — _renameCommitting защита от двойного вызова
+            if (!_renameCommitting) CommitRename();
+        }
+
+        // Поиск потомка по имени x:Name
+        private static T? FindChild<T>(DependencyObject parent, string name) where T : FrameworkElement
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T fe && (name == "" || fe.Name == name)) return fe;
+                var found = FindChild<T>(child, name);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
+        // ════════════════════════════════════════════════════════════════════
         //  ФАЙЛОВЫЕ ОПЕРАЦИИ (Ctrl+C / Ctrl+X / Ctrl+V / Delete)
         // ════════════════════════════════════════════════════════════════════
 
@@ -602,10 +1645,15 @@ namespace LamFiler
         private int            _lastArrowDirection = 0;
         private FileItem?      _hoveredItem;
         private PreviewWindow? _previewWindow;
+        private AppSettings    _settings           = AppSettings.Load();
+        private readonly UndoService _undo         = new();
+        private static readonly SolidColorBrush _brushListNormal    = new(Color.FromRgb(0x1E, 0x1E, 0x1E));
+        private static readonly SolidColorBrush _brushListHighlight = new(Color.FromArgb(30, 0, 120, 212));
 
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (SearchBox.IsFocused) return;
+            if (_renamingItem != null) return;
 
             if (e.Key == Key.Down)
             {
@@ -628,6 +1676,11 @@ namespace LamFiler
                     : FileList.SelectedItems.Cast<FileItem>().FirstOrDefault(f => !f.IsDir);
                 if (target != null && _previewWindow == null)
                     OpenPreview(target.FullPath);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                CancelRename();
                 e.Handled = true;
             }
         }
@@ -696,6 +1749,7 @@ namespace LamFiler
         private void Window_KeyDown(object sender, KeyEventArgs e)
         {
             if (SearchBox.IsFocused) return;
+            if (_renamingItem != null) return;
 
             var selected = FileList.SelectedItems.Cast<FileItem>().ToList();
 
@@ -725,6 +1779,21 @@ namespace LamFiler
                 DeleteFiles(selected);
                 e.Handled = true;
             }
+            else if (e.Key == Key.F2 && selected.Count == 1)
+            {
+                StartRename(selected[0]);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.N && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                CreateNewFolder();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Z && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                PerformUndo();
+                e.Handled = true;
+            }
             else if (e.Key == Key.Enter && selected.Count == 1)
             {
                 var item = selected[0];
@@ -732,6 +1801,46 @@ namespace LamFiler
                 else FileContextMenuService.OpenDefault(item.FullPath);
                 e.Handled = true;
             }
+        }
+
+        private void PerformUndo()
+        {
+            if (!_undo.CanUndo) return;
+
+            var sv = FindChild<ScrollViewer>(FileList, "");
+            double scrollOffset = sv?.VerticalOffset ?? 0;
+            var selectedPath = (FileList.SelectedItem as FileItem)?.FullPath;
+
+            // Если отменяем rename и выделен именно переименованный — цель выделения будет старый путь
+            var action = _undo.Peek();
+            if (action?.Type == FileActionType.Rename &&
+                string.Equals(selectedPath, action.NewPath, StringComparison.OrdinalIgnoreCase))
+                selectedPath = action.OldPath;
+
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+            var err = _undo.Undo();
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+
+            if (err != null)
+                MessageBox.Show($"Не удалось отменить:\n{err}",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            LoadDirectory(_currentPath);
+
+            Dispatcher.InvokeAsync(() =>
+            {
+                var sv2 = FindChild<ScrollViewer>(FileList, "");
+                sv2?.ScrollToVerticalOffset(scrollOffset);
+
+                if (selectedPath != null)
+                {
+                    var item = (FileList.ItemsSource as List<FileItem>)
+                        ?.FirstOrDefault(f => f.FullPath.Equals(selectedPath, StringComparison.OrdinalIgnoreCase));
+                    if (item != null) FileList.SelectedItem = item;
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
         private void PasteFiles()
@@ -754,6 +1863,12 @@ namespace LamFiler
                         File.Copy(src, dst);
                         if (_clipboardCut) File.Delete(src);
                     }
+                    _undo.Push(new FileAction
+                    {
+                        Type    = _clipboardCut ? FileActionType.Move : FileActionType.Copy,
+                        OldPath = src,
+                        NewPath = dst
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -776,12 +1891,25 @@ namespace LamFiler
             var firstIndex = FileList.SelectedIndex;
             _suppressWatcher = true;
             if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+            Directory.CreateDirectory(UndoService.TrashDir);
+
             foreach (var item in items)
             {
                 try
                 {
-                    if (item.IsDir) Directory.Delete(item.FullPath, recursive: true);
-                    else           File.Delete(item.FullPath);
+                    var trashPath = Path.Combine(UndoService.TrashDir,
+                        Guid.NewGuid().ToString("N") + "_" + item.Name);
+
+                    if (item.IsDir) Directory.Move(item.FullPath, trashPath);
+                    else            File.Move(item.FullPath, trashPath);
+
+                    _undo.Push(new FileAction
+                    {
+                        Type    = FileActionType.Delete,
+                        OldPath = item.FullPath,
+                        NewPath = trashPath
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -811,8 +1939,14 @@ namespace LamFiler
             FileList.Items.Refresh();
         }
 
-        private static void CopyDirectory(string src, string dst)
+        private static void  CopyDirectory(string src, string dst)
         {
+            // Защита от копирования папки в саму себя или свою подпапку
+            var srcFull = System.IO.Path.GetFullPath(src).TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
+            var dstFull = System.IO.Path.GetFullPath(dst).TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
+            if (dstFull.StartsWith(srcFull, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Нельзя копировать папку в саму себя: {src}");
+
             Directory.CreateDirectory(dst);
             foreach (var file in Directory.GetFiles(src))
                 File.Copy(file, System.IO.Path.Combine(dst, System.IO.Path.GetFileName(file)));
@@ -830,6 +1964,86 @@ namespace LamFiler
             do { result = System.IO.Path.Combine(dir, $"{name} ({i++}){ext}"); }
             while (File.Exists(result) || Directory.Exists(result));
             return result;
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  СОРТИРОВКА ПО СТОЛБЦАМ
+        // ════════════════════════════════════════════════════════════════════
+
+        private string _sortColumn    = "Name";
+        private bool   _sortAscending = true;
+
+        private void ColHeader_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string col) return;
+            if (_sortColumn == col)
+                _sortAscending = !_sortAscending;
+            else
+            {
+                _sortColumn    = col;
+                _sortAscending = true;
+            }
+            UpdateSortArrows();
+            ApplyFilter(SearchBox.Text);
+        }
+
+        private void UpdateSortArrows()
+        {
+            var asc  = "↑";
+            var desc = "↓";
+            ArrowName.Text     = _sortColumn == "Name"     ? (_sortAscending ? asc : desc) : "";
+            ArrowModified.Text = _sortColumn == "Modified" ? (_sortAscending ? asc : desc) : "";
+            ArrowSize.Text     = _sortColumn == "Size"     ? (_sortAscending ? asc : desc) : "";
+            ArrowType.Text     = _sortColumn == "Type"     ? (_sortAscending ? asc : desc) : "";
+        }
+
+        private IEnumerable<FileItem> ApplySort(IEnumerable<FileItem> items)
+        {
+            // Папки всегда сверху
+            var dirs  = items.Where(f =>  f.IsDir);
+            var files = items.Where(f => !f.IsDir);
+
+            dirs  = SortGroup(dirs);
+            files = SortGroup(files);
+
+            return dirs.Concat(files);
+        }
+
+        private IEnumerable<FileItem> SortGroup(IEnumerable<FileItem> group)
+        {
+            IOrderedEnumerable<FileItem> ordered = _sortColumn switch
+            {
+                "Modified" => _sortAscending
+                    ? group.OrderBy(f => f.Modified)
+                    : group.OrderByDescending(f => f.Modified),
+                "Size" => _sortAscending
+                    ? group.OrderBy(f => ParseSize(f.Size))
+                    : group.OrderByDescending(f => ParseSize(f.Size)),
+                "Type" => _sortAscending
+                    ? group.OrderBy(f => f.TypeExt, StringComparer.OrdinalIgnoreCase)
+                    : group.OrderByDescending(f => f.TypeExt, StringComparer.OrdinalIgnoreCase),
+                _ => _sortAscending  // Name
+                    ? group.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                    : group.OrderByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase),
+            };
+            return ordered;
+        }
+
+        private static long ParseSize(string size)
+        {
+            // Переводим отображаемый размер обратно в байты для сравнения
+            if (size == "—" || string.IsNullOrWhiteSpace(size)) return -1;
+            var parts = size.Split(' ');
+            if (parts.Length < 2 || !double.TryParse(parts[0],
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var val)) return 0;
+            return parts[1] switch
+            {
+                "KB" => (long)(val * 1024),
+                "MB" => (long)(val * 1024 * 1024),
+                "GB" => (long)(val * 1024L * 1024 * 1024),
+                _    => (long)val
+            };
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -960,10 +2174,158 @@ namespace LamFiler
             return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
         }
 
+        private static void RunAsAdmin(string path)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName        = path,
+                    UseShellExecute = true,
+                    Verb            = "runas"
+                });
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // Пользователь нажал Отмена в UAC-диалоге — молча игнорируем
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Не удалось запустить:\n{ex.Message}",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
         protected override void OnClosed(EventArgs e)
         {
             _watcher?.Dispose();
+            _watcherDebounce?.Dispose();
             base.OnClosed(e);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  СОЗДАТЬ (подменю ПКМ)
+        // ════════════════════════════════════════════════════════════════════
+
+        private static string? _winRarPath;
+        private static bool    _winRarChecked;
+
+        private static string? FindWinRar()
+        {
+            if (_winRarChecked) return _winRarPath;
+            _winRarChecked = true;
+            var candidates = new[]
+            {
+                System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),  "WinRAR", "WinRAR.exe"),
+                System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "WinRAR", "WinRAR.exe"),
+            };
+            _winRarPath = candidates.FirstOrDefault(File.Exists);
+            return _winRarPath;
+        }
+
+        private MenuItem BuildCreateSubmenu()
+        {
+            var sub = MniSub("➕", "Создать");
+
+            // 1. Папка
+            sub.Items.Add(Mni("📁", "Папку", () => CreateNewFolder()));
+
+            // 2. Текстовый файл
+            sub.Items.Add(Mni("📄", "Текстовый файл", () => CreateNewTextFile()));
+
+            // 3. Архив — RAR если есть WinRAR, иначе ZIP
+            var winrar = FindWinRar();
+            if (winrar != null)
+                sub.Items.Add(Mni("📦", "Архив RAR", () => CreateNewRar(winrar)));
+            else
+                sub.Items.Add(Mni("📦", "Архив ZIP", () => CreateNewZip()));
+
+            return sub;
+        }
+
+        private void CreateNewTextFile()
+        {
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+            var path = GetUniquePath(System.IO.Path.Combine(_currentPath, "New File.txt"));
+            File.WriteAllText(path, "");
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            LoadDirectory(_currentPath);
+            Dispatcher.InvokeAsync(() =>
+            {
+                var item = (FileList.ItemsSource as List<FileItem>)
+                    ?.FirstOrDefault(f => f.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
+                if (item != null)
+                {
+                    FileList.SelectedItem = item;
+                    FileList.ScrollIntoView(item);
+                    StartRename(item);
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void CreateNewZip()
+        {
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+            var path = GetUniquePath(System.IO.Path.Combine(_currentPath, "New Archive.zip"));
+            // Пустой валидный zip: записываем End-of-central-directory запись вручную
+            File.WriteAllBytes(path, new byte[] { 0x50, 0x4B, 0x05, 0x06, 0,0, 0,0, 0,0, 0,0, 0,0,0,0, 0,0,0,0, 0,0 });
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            LoadDirectory(_currentPath);
+            Dispatcher.InvokeAsync(() =>
+            {
+                var item = (FileList.ItemsSource as List<FileItem>)
+                    ?.FirstOrDefault(f => f.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
+                if (item != null)
+                {
+                    FileList.SelectedItem = item;
+                    FileList.ScrollIntoView(item);
+                    StartRename(item);
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void CreateNewRar(string winrarExe)
+        {
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+            var path = GetUniquePath(System.IO.Path.Combine(_currentPath, "New Archive.rar"));
+            try
+            {
+                // Пустой валидный RAR5: signature + archive header + end-of-archive block (CRC верифицирован)
+                File.WriteAllBytes(path, new byte[]
+                {
+                    0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00, // RAR5 signature
+                    0x3D, 0x3C, 0xDE, 0xE5, 0x02, 0x01, 0x00,       // archive header block
+                    0x39, 0xF9, 0xB2, 0x81, 0x02, 0x05, 0x00        // end-of-archive block
+                });
+            }
+            catch (Exception ex)
+            {
+                _suppressWatcher = false;
+                if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                MessageBox.Show($"Ошибка создания RAR:\n{ex.Message}",
+                    "Lambada", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            _suppressWatcher = false;
+            if (_watcher != null) _watcher.EnableRaisingEvents = true;
+            LoadDirectory(_currentPath);
+            Dispatcher.InvokeAsync(() =>
+            {
+                var item = (FileList.ItemsSource as List<FileItem>)
+                    ?.FirstOrDefault(f => f.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
+                if (item != null)
+                {
+                    FileList.SelectedItem = item;
+                    FileList.ScrollIntoView(item);
+                    StartRename(item);
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
         }
     }
 }
+

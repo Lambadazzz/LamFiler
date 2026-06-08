@@ -59,9 +59,16 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListViewItem">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}" Padding="12,0">
-                            <ContentPresenter VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                    IsHitTestVisible="False"/>
+                            <ContentPresenter VerticalAlignment="Stretch"/>
+                            <!-- Прозрачный оверлей поверх — единственная цель для hit-test,
+                                 исключает мигания IsMouseOver при переходе между дочерними элементами -->
+                            <Border Background="Transparent"
+                                    IsHitTestVisible="True"
+                                    Panel.ZIndex="99"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="bd" Property="Background" Value="{StaticResource BgHover}"/>
@@ -69,6 +76,13 @@
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="bd" Property="Background" Value="{StaticResource BgSelected}"/>
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsSelected" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource BgSelected}"/>
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -117,7 +131,11 @@
                         BorderBrush="{StaticResource Border}" BorderThickness="1"
                         CornerRadius="4" Margin="0,0,8,0" Height="26">
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="6,0">
-                        <ItemsControl x:Name="Breadcrumb" VerticalAlignment="Center">
+                        <ItemsControl x:Name="Breadcrumb" VerticalAlignment="Center"
+                                      AllowDrop="True"
+                                      Drop="Breadcrumb_Drop"
+                                      DragOver="Breadcrumb_DragOver"
+                                      DragLeave="Breadcrumb_DragLeave">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <StackPanel Orientation="Horizontal"/>
@@ -214,15 +232,44 @@
                         BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
                     <Grid Margin="12,0">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28"/>
                             <ColumnDefinition Width="3*"/>
                             <ColumnDefinition Width="2*"/>
                             <ColumnDefinition Width="80"/>
                             <ColumnDefinition Width="70"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Name" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1" Text="Modified" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextAlignment="Right"/>
-                        <TextBlock Grid.Column="2" Text="Size" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextAlignment="Right"/>
-                        <TextBlock Grid.Column="3" Text="Type" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center" TextAlignment="Right"/>
+                        <Button Grid.Column="1" x:Name="ColName" Click="ColHeader_Click" Tag="Name"
+                                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                HorizontalContentAlignment="Left" Padding="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Name" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="ArrowName" Text="" Foreground="{StaticResource Accent}" FontSize="10" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="2" x:Name="ColModified" Click="ColHeader_Click" Tag="Modified"
+                                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                HorizontalContentAlignment="Right" Padding="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ArrowModified" Text="" Foreground="{StaticResource Accent}" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <TextBlock Text="Modified" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="3" x:Name="ColSize" Click="ColHeader_Click" Tag="Size"
+                                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                HorizontalContentAlignment="Right" Padding="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ArrowSize" Text="" Foreground="{StaticResource Accent}" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <TextBlock Text="Size" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="4" x:Name="ColType" Click="ColHeader_Click" Tag="Type"
+                                Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                HorizontalContentAlignment="Right" Padding="0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="ArrowType" Text="" Foreground="{StaticResource Accent}" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <TextBlock Text="Type" Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                     </Grid>
                 </Border>
 
@@ -235,37 +282,89 @@
                           MouseRightButtonDown="FileList_MouseRightButtonDown"
                           MouseRightButtonUp="FileList_MouseRightButtonUp"
                           PreviewKeyDown="FileList_PreviewKeyDown"
+                          PreviewMouseLeftButtonDown="FileList_PreviewMouseLeftButtonDown"
+                          PreviewMouseLeftButtonUp="FileList_PreviewMouseLeftButtonUp"
+                          PreviewMouseMove="FileList_PreviewMouseMove"
+                          AllowDrop="True"
+                          DragOver="FileList_DragOver"
+                          DragLeave="FileList_DragLeave"
+                          Drop="FileList_Drop"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
                           ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListView.ItemTemplate>
                         <DataTemplate>
-                            <Grid Opacity="{Binding Opacity}">
+                            <Grid Opacity="{Binding Opacity}" VerticalAlignment="Stretch" Background="#01000000">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="28"/>
                                     <ColumnDefinition Width="3*"/>
                                     <ColumnDefinition Width="2*"/>
                                     <ColumnDefinition Width="80"/>
                                     <ColumnDefinition Width="70"/>
                                 </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                <!-- Checkbox-зона -->
+                                <Border Grid.Column="0" x:Name="CheckZone"
+                                        Background="#01000000"
+                                        HorizontalAlignment="Stretch"
+                                        VerticalAlignment="Stretch"
+                                        Tag="checkbox">
+                                    <Ellipse x:Name="CheckDot"
+                                             Width="10" Height="10"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                             Fill="Transparent"
+                                             Stroke="#555555" StrokeThickness="1.2"
+                                             Opacity="0"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Icon}" FontSize="14"
                                                Foreground="{Binding IconColor}"
                                                VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBlock Text="{Binding Name}" FontSize="13"
+                                    <!-- Обычное имя (скрывается при редактировании) -->
+                                    <TextBlock x:Name="NameLabel"
+                                               Text="{Binding Name}" FontSize="13"
                                                Foreground="{StaticResource TextPrimary}"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"/>
+                                    <!-- Inline-редактор (виден только при IsRenaming=True) -->
+                                    <TextBox x:Name="NameEditor"
+                                             Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
+                                             FontSize="13" Padding="2,1"
+                                             Background="#1E1E1E" Foreground="#CCCCCC"
+                                             BorderBrush="#0078D4" BorderThickness="1"
+                                             CaretBrush="#CCCCCC"
+                                             Visibility="Collapsed"
+                                             MinWidth="120"
+                                             KeyDown="RenameBox_KeyDown"
+                                             LostFocus="RenameBox_LostFocus"/>
                                 </StackPanel>
-                                <TextBlock Grid.Column="1" Text="{Binding Modified}" FontSize="12"
+                                <TextBlock Grid.Column="2" Text="{Binding Modified}" FontSize="12"
                                            Foreground="{StaticResource TextMuted}"
-                                           TextAlignment="Right" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="{Binding Size}" FontSize="12"
+                                           TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <TextBlock Grid.Column="3" Text="{Binding Size}" FontSize="12"
                                            Foreground="{StaticResource TextMuted}"
-                                           TextAlignment="Right" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="3" Text="{Binding TypeExt}" FontSize="12"
+                                           TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <TextBlock Grid.Column="4" Text="{Binding TypeExt}" FontSize="12"
                                            Foreground="{StaticResource TextMuted}"
-                                           TextAlignment="Right" VerticalAlignment="Center"/>
+                                           TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,12,0"/>
                             </Grid>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                    <Setter TargetName="NameLabel"  Property="Visibility" Value="Collapsed"/>
+                                    <Setter TargetName="NameEditor" Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                                <!-- Точка появляется при hover строки или выборе -->
+                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListViewItem}}" Value="True">
+                                    <Setter TargetName="CheckDot" Property="Opacity" Value="1"/>
+                                    <Setter TargetName="CheckDot" Property="Fill" Value="#0078D4"/>
+                                    <Setter TargetName="CheckDot" Property="Stroke" Value="#0078D4"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListViewItem}}" Value="True">
+                                    <Setter TargetName="CheckDot" Property="Opacity" Value="0.5"/>
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>

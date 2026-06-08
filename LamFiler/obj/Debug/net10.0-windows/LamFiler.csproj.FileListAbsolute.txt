@@ -44,3 +44,5 @@ C:\Users\nyshe\source\repos\LamFiler\LamFiler\bin\Debug\net10.0-windows\Microsof
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\PreviewWindow.baml
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\PreviewWindow.g.cs
 C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\LamFiler.sourcelink.json
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\RenameExtWarningWindow.baml
+C:\Users\nyshe\source\repos\LamFiler\LamFiler\obj\Debug\net10.0-windows\RenameExtWarningWindow.g.cs
