@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+080111257566dc1580ec2609728bdf6fad013cb3")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a9ad67cc15b104ef80c08bad926d31be890096dd")]
 [assembly: System.Reflection.AssemblyProductAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LamFiler")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

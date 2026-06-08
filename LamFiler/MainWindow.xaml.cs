@@ -20,6 +20,18 @@ using Path = System.IO.Path;
 
 namespace LamFiler
 {
+    // ════════════════════════════════════════════════════════════════════
+    //  TAB STATE MODEL
+    // ════════════════════════════════════════════════════════════════════
+    public class TabState
+    {
+        public string CurrentPath   { get; set; } = "";
+        public Stack<string> Back   { get; set; } = new();
+        public Stack<string> Forward{ get; set; } = new();
+        public string Header        { get; set; } = "Новая вкладка";
+        public Border? Button       { get; set; } // UI-кнопка вкладки
+    }
+
     public partial class MainWindow : Window
     {
         public class FileItem : INotifyPropertyChanged
@@ -106,7 +118,32 @@ namespace LamFiler
         {
             InitializeComponent();
             BuildSidebar();
-            Navigate(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            AddTab(null, activate: true); // стартовая вкладка = Home
+        }
+
+        // Конструктор для отрыва вкладки в новое окно
+        public MainWindow(string path, Stack<string> back, Stack<string> forward)
+        {
+            InitializeComponent();
+            BuildSidebar();
+            var tab = new TabState
+            {
+                CurrentPath = path,
+                Back        = back,
+                Forward     = forward,
+                Header      = Path.GetFileName(path)
+            };
+            if (string.IsNullOrEmpty(tab.Header)) tab.Header = path;
+            _tabs.Add(tab);
+            tab.Button = BuildTabButton(tab);
+            TabStrip.Children.Add(tab.Button);
+            _activeTab = null;
+            // Ручно восстанавливаем состояние без сохранения предыдущей
+            _activeTab = tab;
+            UpdateTabButtonStyle(tab.Button!, true);
+            _backStack.Clear();    foreach (var p in tab.Back.Reverse())    _backStack.Push(p);
+            _forwardStack.Clear(); foreach (var p in tab.Forward.Reverse()) _forwardStack.Push(p);
+            Navigate(tab.CurrentPath, addToBack: false);
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -126,6 +163,13 @@ namespace LamFiler
             UpdateBreadcrumb(path);
             UpdateNavButtons();
             StatusRight.Text = path;
+            // Обновляем заголовок вкладки
+            if (_activeTab != null)
+            {
+                _activeTab.Header = Path.GetFileName(path);
+                if (string.IsNullOrEmpty(_activeTab.Header)) _activeTab.Header = path;
+                UpdateTabLabel(_activeTab);
+            }
         }
 
         private void LoadDirectory(string path, bool restoreSelection = false, int selectIndex = 0)
@@ -259,6 +303,23 @@ namespace LamFiler
             if (sender is Button btn && btn.Tag is string p) Navigate(p);
         }
 
+        private void Breadcrumb_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Middle) return;
+            // Ищем Button в дереве под курсором
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is Button btn && btn.Tag is string path)
+                {
+                    OpenInNewTab(path);
+                    e.Handled = true;
+                    return;
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+        }
+
         // ════════════════════════════════════════════════════════════════════
         //  КНОПКИ НАЗАД / ВПЕРЁД
         // ════════════════════════════════════════════════════════════════════
@@ -286,6 +347,23 @@ namespace LamFiler
         // ════════════════════════════════════════════════════════════════════
         //  ДВОЙНОЙ КЛИК
         // ════════════════════════════════════════════════════════════════════
+
+        private void FileList_MouseButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // Средняя кнопка (Колёсико) на папке — открыть в новой вкладке
+            if (e.ChangedButton != MouseButton.Middle) return;
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is ListViewItem lvi && lvi.Content is FileItem fi && fi.IsDir)
+                {
+                    OpenInNewTab(fi.FullPath);
+                    e.Handled = true;
+                    return;
+                }
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+        }
 
         private void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
@@ -480,13 +558,19 @@ namespace LamFiler
                         () => RunAsAdmin(item.FullPath)));
                     menu.Items.Add(subRun);
                 }
+                else if (item.IsDir)
+                {
+                    // Папка — "Открыть" с подменю
+                    var subOpen = MniSubClickable("▶", "Открыть",
+                        () => Navigate(item.FullPath));
+                    subOpen.Items.Add(Mni("⊞", "Открыть в новой вкладке",
+                        () => OpenInNewTab(item.FullPath)));
+                    menu.Items.Add(subOpen);
+                }
                 else
                 {
                     menu.Items.Add(Mni("▶", "Открыть", () =>
-                    {
-                        if (item.IsDir) Navigate(item.FullPath);
-                        else FileContextMenuService.OpenDefault(item.FullPath);
-                    }));
+                        FileContextMenuService.OpenDefault(item.FullPath)));
                 }
 
                 menu.Items.Add(Mni("✏", "Переименовать", () => StartRename(item)));
@@ -1650,6 +1734,441 @@ namespace LamFiler
         private static readonly SolidColorBrush _brushListNormal    = new(Color.FromRgb(0x1E, 0x1E, 0x1E));
         private static readonly SolidColorBrush _brushListHighlight = new(Color.FromArgb(30, 0, 120, 212));
 
+        // ════════════════════════════════════════════════════════════════════
+        //  TABS
+        // ════════════════════════════════════════════════════════════════════
+        private readonly List<TabState> _tabs = new();
+        private TabState? _activeTab;
+
+        // ─── Drag‑tab ────────────────────────────────────────────────────────────────────
+        private TabState? _draggingTab;
+        private Point     _tabDragStart;
+        private bool      _tabDragStarted;
+
+        // ─── Создание вкладки ────────────────────────────────────────────────────────────
+        private TabState AddTab(string? path, bool activate = true)
+        {
+            bool isHome = string.IsNullOrEmpty(path);
+            var tab = new TabState
+            {
+                CurrentPath = path ?? "",
+                Header      = isHome ? "🏠  Дом" : (Path.GetFileName(path!) is var h && string.IsNullOrEmpty(h) ? path! : h)
+            };
+            _tabs.Add(tab);
+            tab.Button = BuildTabButton(tab);
+            TabStrip.Children.Add(tab.Button);
+            if (activate) ActivateTab(tab);
+            return tab;
+        }
+
+        private Border BuildTabButton(TabState tab)
+        {
+            // Label
+            var lbl = new TextBlock
+            {
+                Text = tab.Header, FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxWidth = 140, TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85)),
+                Margin = new Thickness(8, 0, 4, 0)
+            };
+
+            // Close button
+            var close = new TextBlock
+            {
+                Text = "×", FontSize = 14, Width = 18, Height = 18,
+                TextAlignment = TextAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Arrow,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85)),
+                Background = Brushes.Transparent,
+                Margin = new Thickness(0, 0, 4, 0)
+            };
+            close.MouseEnter += (_, _) => close.Foreground = Brushes.White;
+            close.MouseLeave += (_, _) => close.Foreground = new SolidColorBrush(Color.FromRgb(0x85, 0x85, 0x85));
+            close.MouseLeftButtonDown += (s, e) => e.Handled = true; // блокируем добуббинг до bd
+            close.MouseLeftButtonUp   += (s, e) => { e.Handled = true; CloseTab(tab); };
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(lbl);
+            row.Children.Add(close);
+
+            var bd = new Border
+            {
+                Child = row,
+                CornerRadius = new CornerRadius(4, 4, 0, 0),
+                Margin = new Thickness(1, 4, 0, 0),
+                Padding = new Thickness(0),
+                Height = 27,
+                MinWidth = 80,
+                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)),
+                Cursor = Cursors.Hand,
+                AllowDrop = true,
+                Tag = tab
+            };
+
+            // Клик по вкладке — активируем
+            bd.MouseLeftButtonDown += (s, e) =>
+            {
+                _tabDragStart   = e.GetPosition(null);
+                _tabDragStarted = false;
+                _draggingTab    = tab;
+                bd.CaptureMouse();
+                e.Handled = true;
+            };
+
+            bd.MouseLeftButtonUp += (s, e) =>
+            {
+                bd.ReleaseMouseCapture();
+                var wasDragging = _tabDragStarted;
+                _draggingTab    = null;
+                _tabDragStarted = false;
+                if (!wasDragging) ActivateTab(tab);
+                e.Handled = true;
+            };
+
+            bd.MouseMove += (s, e) =>
+            {
+                if (_draggingTab == null || e.LeftButton != MouseButtonState.Pressed) return;
+                var diff = e.GetPosition(null) - _tabDragStart;
+                if (!_tabDragStarted &&
+                    (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                     Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance))
+                    _tabDragStarted = true;
+                // Перемещение внутри TabStrip — обрабатывается в TabBar_MouseMove
+            };
+
+            // Дроп файлов на вкладку
+            bd.DragOver += (s, e) =>
+            {
+                if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Effects = DragDropEffects.None; e.Handled = true; return; }
+                ActivateTab(tab); // переключаемся при наведении
+                e.Effects = (e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                    ? DragDropEffects.Copy : DragDropEffects.Move;
+                e.Handled = true;
+            };
+
+            bd.Drop += (s, e) =>
+            {
+                if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+                var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+                if (sources?.Length > 0)
+                {
+                    var isCopy = (e.KeyStates & DragDropKeyStates.ControlKey) != 0;
+                    DropFiles(sources, tab.CurrentPath, isCopy);
+                }
+                e.Handled = true;
+            };
+
+            UpdateTabButtonStyle(bd, false);
+            return bd;
+        }
+
+        // Обновляем надпись кнопки вкладки
+        private static void UpdateTabLabel(TabState tab)
+        {
+            if (tab.Button?.Child is not StackPanel sp) return;
+            if (sp.Children[0] is TextBlock lbl) lbl.Text = tab.Header;
+        }
+
+        private static void UpdateTabButtonStyle(Border bd, bool active)
+        {
+            bd.Background = new SolidColorBrush(active
+                ? Color.FromRgb(0x1E, 0x1E, 0x1E)
+                : Color.FromRgb(0x1A, 0x1A, 0x1A));
+            bd.BorderThickness = new Thickness(active ? 1 : 0);
+            bd.BorderBrush = active
+                ? new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C))
+                : Brushes.Transparent;
+
+            // Яркость текста
+            if (bd.Child is StackPanel sp && sp.Children.Count > 0 && sp.Children[0] is TextBlock lbl)
+                lbl.Foreground = new SolidColorBrush(active
+                    ? Color.FromRgb(0xCC, 0xCC, 0xCC)
+                    : Color.FromRgb(0x85, 0x85, 0x85));
+        }
+
+        private void ActivateTab(TabState tab)
+        {
+            if (_activeTab == tab) return;
+
+            // Сохраняем состояние текущей вкладки
+            if (_activeTab != null)
+            {
+                _activeTab.CurrentPath = _currentPath;
+                _activeTab.Back   = new Stack<string>(_backStack.Reverse());
+                _activeTab.Forward= new Stack<string>(_forwardStack.Reverse());
+                if (_activeTab.Button != null) UpdateTabButtonStyle(_activeTab.Button, false);
+            }
+
+            _activeTab = tab;
+            if (_activeTab.Button != null) UpdateTabButtonStyle(_activeTab.Button, true);
+
+            // Восстанавливаем состояние новой вкладки
+            _backStack.Clear();    foreach (var p in tab.Back.Reverse())    _backStack.Push(p);
+            _forwardStack.Clear(); foreach (var p in tab.Forward.Reverse()) _forwardStack.Push(p);
+
+            bool isHome = string.IsNullOrEmpty(tab.CurrentPath);
+            if (isHome)
+            {
+                ShowHomePage();
+            }
+            else
+            {
+                HomePanel.Visibility = Visibility.Collapsed;
+                Navigate(tab.CurrentPath, addToBack: false);
+            }
+        }
+
+        private void CloseTab(TabState tab)
+        {
+            var idx = _tabs.IndexOf(tab);
+            if (idx < 0) return;
+
+            bool wasActive = (_activeTab == tab);
+
+            _tabs.Remove(tab);
+            if (tab.Button != null) TabStrip.Children.Remove(tab.Button);
+
+            if (_tabs.Count == 0)
+            {
+                AddTab(null, activate: true);
+                return;
+            }
+
+            if (wasActive)
+            {
+                // Закрываем активную — открываем левую (или первую)
+                _activeTab = null;
+                var next = _tabs[Math.Max(0, idx - 1)];
+                ActivateTab(next);
+            }
+            // Если закрываем неактивную — ничего не меняем, активная вкладка остаётся активной
+        }
+
+        // ─── Вытягивание вкладки в новое окно ──────────────────────────────────────────────
+        private void TearOutTab(TabState tab, Point screenPos)
+        {
+            if (_tabs.Count <= 1) return;
+
+            _tabs.Remove(tab);
+            if (tab.Button != null) TabStrip.Children.Remove(tab.Button);
+
+            if (_activeTab == tab)
+            {
+                _activeTab = null;
+                ActivateTab(_tabs[0]);
+            }
+
+            var newWin = new MainWindow(tab.CurrentPath,
+                new Stack<string>(tab.Back.Reverse()),
+                new Stack<string>(tab.Forward.Reverse()));
+
+            // Позиционируем так чтобы курсор оказался примерно над таббаром нового окна
+            newWin.Left = screenPos.X - 100;
+            newWin.Top  = screenPos.Y - 16;
+            newWin.Show();
+
+            // Сразу после Show начинаем DragMove — окно будет следовать за мышью
+            newWin.Dispatcher.InvokeAsync(() =>
+            {
+                try { newWin.DragMove(); } catch { }
+            }, System.Windows.Threading.DispatcherPriority.Input);
+        }
+
+        // ─── Tab bar handlers ──────────────────────────────────────────────────────────────────
+        private void TabBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (_draggingTab == null || !_tabDragStarted || e.LeftButton != MouseButtonState.Pressed) return;
+
+            var posOnScreen = PointToScreen(e.GetPosition(this));
+            var tabBarPosInScreen = TabBarBorder.PointToScreen(new Point(0, 0));
+            var dy = posOnScreen.Y - (tabBarPosInScreen.Y + TabBarBorder.ActualHeight / 2);
+
+            // Вытягивание в новое окно — курсор далеко ушёл по вертикали
+            if (Math.Abs(dy) > 60)
+            {
+                var dt = _draggingTab;
+                _draggingTab    = null;
+                _tabDragStarted = false;
+                if (dt.Button != null) dt.Button.ReleaseMouseCapture();
+                TearOutTab(dt, new Point(posOnScreen.X - 100, posOnScreen.Y - 10));
+                return;
+            }
+
+            // Горизонтальная перестановка — определяем над какой вкладкой находится курсор
+            if (_draggingTab.Button == null) return;
+            var posInStrip = e.GetPosition(TabStrip);
+
+            int targetIdx = -1;
+            double accX = 0;
+            for (int i = 0; i < _tabs.Count; i++)
+            {
+                var btn = _tabs[i].Button;
+                if (btn == null) continue;
+                double w = btn.ActualWidth + btn.Margin.Left + btn.Margin.Right;
+                if (posInStrip.X < accX + w / 2) { targetIdx = i; break; }
+                accX += w;
+            }
+            if (targetIdx < 0) targetIdx = _tabs.Count - 1;
+
+            var srcIdx = _tabs.IndexOf(_draggingTab);
+            if (srcIdx == targetIdx || targetIdx < 0) return;
+
+            // Переставляем в списке и в UI
+            _tabs.RemoveAt(srcIdx);
+            _tabs.Insert(targetIdx, _draggingTab);
+
+            TabStrip.Children.Remove(_draggingTab.Button);
+            TabStrip.Children.Insert(targetIdx, _draggingTab.Button);
+        }
+
+        private void TabBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _draggingTab    = null;
+            _tabDragStarted = false;
+        }
+
+        private void BtnNewTab_Click(object sender, RoutedEventArgs e)
+            => AddTab(null, activate: true);
+
+        private void TabScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            // Перенаправляем колёсико в горизонтальный скролл
+            TabScroll.ScrollToHorizontalOffset(
+                TabScroll.HorizontalOffset - e.Delta * 0.5);
+            e.Handled = true;
+        }
+
+        private void TabStrip_DragOver(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            { e.Effects = DragDropEffects.None; e.Handled = true; }
+        }
+
+        private void TabStrip_Drop(object sender, DragEventArgs e)
+        {
+            // Дроп на пустую часть TabStrip (не на вкладку) — перемещаем в текущую папку
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (sources?.Length > 0)
+                DropFiles(sources, _currentPath, (e.KeyStates & DragDropKeyStates.ControlKey) != 0);
+            e.Handled = true;
+        }
+
+        // Открыть путь в новой вкладке
+        public void OpenInNewTab(string path)
+        {
+            // Если такая вкладка уже есть — просто активируем её
+            var existing = _tabs.FirstOrDefault(t =>
+                string.Equals(t.CurrentPath, path, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                ActivateTab(existing);
+                return;
+            }
+            AddTab(path, activate: true);
+        }
+
+        // ─── Home page ──────────────────────────────────────────────────────────────────
+        private bool _homePanelBuilt = false;
+
+        private void ShowHomePage()
+        {
+            // Строим карточки один раз
+            if (!_homePanelBuilt)
+            {
+                _homePanelBuilt = true;
+
+                var quickItems = new[]
+                {
+                    ("🖥", "Desktop",   Environment.GetFolderPath(Environment.SpecialFolder.Desktop)),
+                    ("⬇", "Downloads", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")),
+                    ("📄", "Documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
+                    ("🖼", "Pictures",  Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)),
+                    ("🎵", "Music",     Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)),
+                    ("🎬", "Videos",    Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)),
+                };
+                foreach (var (icon, label, path) in quickItems)
+                    HomeQuickPanel.Children.Add(BuildHomeCard(icon, label, path));
+
+                foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
+                {
+                    var label = $"{drive.Name.TrimEnd('\\')}";
+                    if (drive.VolumeLabel.Length > 0) label += $"  {drive.VolumeLabel}";
+                    HomeDrivesPanel.Children.Add(BuildHomeCard("💾", label, drive.RootDirectory.FullName));
+                }
+            }
+
+            HomePanel.Visibility    = Visibility.Visible;
+            FileList.ItemsSource    = null;
+            Breadcrumb.ItemsSource  = null;
+            StatusLeft.Text         = "";
+            StatusRight.Text        = "";
+            BtnBack.IsEnabled       = false;
+            BtnForward.IsEnabled    = false;
+        }
+
+        private Border BuildHomeCard(string icon, string label, string path)
+        {
+            var iconTb = new TextBlock
+            {
+                Text = icon, FontSize = 26,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 6)
+            };
+            var labelTb = new TextBlock
+            {
+                Text = label, FontSize = 12, TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC))
+            };
+            var stack = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                Width = 90,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            stack.Children.Add(iconTb);
+            stack.Children.Add(labelTb);
+
+            var card = new Border
+            {
+                Child = stack,
+                Width = 110, Height = 82,
+                Margin = new Thickness(0, 0, 10, 10),
+                CornerRadius = new CornerRadius(6),
+                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)),
+                Cursor = Cursors.Hand,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            // hover
+            card.MouseEnter += (_, _) => card.Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2E));
+            card.MouseLeave += (_, _) => card.Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26));
+
+            // ЛКМ — открыть в текущей вкладке
+            var p = path;
+            card.MouseLeftButtonUp += (_, e) =>
+            {
+                if (e.ChangedButton == MouseButton.Left)
+                {
+                    HomePanel.Visibility = Visibility.Collapsed;
+                    if (_activeTab != null) _activeTab.CurrentPath = p;
+                    Navigate(p);
+                }
+            };
+            // СКМ — открыть в новой вкладке
+            card.MouseUp += (_, e) =>
+            {
+                if (e.ChangedButton == MouseButton.Middle)
+                    OpenInNewTab(p);
+            };
+
+            return card;
+        }
+
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (SearchBox.IsFocused) return;
@@ -1792,6 +2311,16 @@ namespace LamFiler
             else if (e.Key == Key.Z && Keyboard.Modifiers == ModifierKeys.Control)
             {
                 PerformUndo();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.T && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                AddTab(null, activate: true); // дом по умолчанию
+                e.Handled = true;
+            }
+            else if (e.Key == Key.W && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                if (_activeTab != null) CloseTab(_activeTab);
                 e.Handled = true;
             }
             else if (e.Key == Key.Enter && selected.Count == 1)

@@ -97,13 +97,58 @@
 
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="32"/>
             <RowDefinition Height="40"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="22"/>
         </Grid.RowDefinitions>
 
+        <!-- ══════════════ TAB BAR ══════════════ -->
+        <Border Grid.Row="0" x:Name="TabBarBorder"
+                Background="#161616"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1"
+                MouseMove="TabBar_MouseMove"
+                MouseLeftButtonUp="TabBar_MouseLeftButtonUp">
+            <Grid>
+                <!-- Вкладки -->
+                <ScrollViewer x:Name="TabScroll"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled"
+                              PreviewMouseWheel="TabScroll_PreviewMouseWheel"
+                              Margin="0,0,36,0">
+                    <StackPanel x:Name="TabStrip" Orientation="Horizontal"
+                                AllowDrop="True"
+                                DragOver="TabStrip_DragOver"
+                                Drop="TabStrip_Drop"/>
+                </ScrollViewer>
+                <!-- Кнопка новой вкладки -->
+                <Button x:Name="BtnNewTab" Click="BtnNewTab_Click"
+                        Width="28" Height="22"
+                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Margin="0,0,4,0"
+                        Background="Transparent" BorderThickness="0"
+                        Cursor="Hand" ToolTip="Новая вкладка (Ctrl+T)"
+                        Foreground="{StaticResource TextMuted}">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4">
+                                <TextBlock Text="+" FontSize="16" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Margin="0,-1,0,0"
+                                           Foreground="{StaticResource TextMuted}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{StaticResource BgHover}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </Border>
+
         <!-- ══════════════ TOOLBAR ══════════════ -->
-        <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
+        <Border Grid.Row="1" Background="{StaticResource BgSecondary}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
             <Grid Margin="8,0">
                 <Grid.ColumnDefinitions>
@@ -135,7 +180,8 @@
                                       AllowDrop="True"
                                       Drop="Breadcrumb_Drop"
                                       DragOver="Breadcrumb_DragOver"
-                                      DragLeave="Breadcrumb_DragLeave">
+                                      DragLeave="Breadcrumb_DragLeave"
+                                      MouseUp="Breadcrumb_MouseUp">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <StackPanel Orientation="Horizontal"/>
@@ -200,7 +246,7 @@
         </Border>
 
         <!-- ══════════════ BODY ══════════════ -->
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="170" MinWidth="120" MaxWidth="300"/>
                 <ColumnDefinition Width="Auto"/>
@@ -278,6 +324,7 @@
                           BorderThickness="0"
                           ItemContainerStyle="{StaticResource FileRow}"
                           MouseDoubleClick="FileList_MouseDoubleClick"
+                          MouseUp="FileList_MouseButtonUp"
                           SelectionChanged="FileList_SelectionChanged"
                           MouseRightButtonDown="FileList_MouseRightButtonDown"
                           MouseRightButtonUp="FileList_MouseRightButtonUp"
@@ -368,6 +415,26 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
+
+                <!-- ══════ HOME PAGE ══════ -->
+                <Grid x:Name="HomePanel" Grid.Row="1"
+                      Background="{StaticResource BgPrimary}"
+                      Panel.ZIndex="10" Visibility="Collapsed">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="32,28,32,28">
+                            <TextBlock Text="LamFiler" FontSize="22" FontWeight="SemiBold"
+                                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,24"/>
+
+                            <TextBlock Text="Быстрый доступ" FontSize="11" FontWeight="Medium"
+                                       Foreground="{StaticResource TextMuted}" Margin="0,0,0,10"/>
+                            <WrapPanel x:Name="HomeQuickPanel" Orientation="Horizontal" Margin="0,0,0,28"/>
+
+                            <TextBlock Text="ДИСКИ" FontSize="11" FontWeight="Medium"
+                                       Foreground="{StaticResource TextMuted}" Margin="0,0,0,10"/>
+                            <WrapPanel x:Name="HomeDrivesPanel" Orientation="Horizontal"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
             </Grid>
 
             <!-- Splitter 2 -->
@@ -455,7 +522,7 @@
         </Grid>
 
         <!-- ══════════════ STATUSBAR ══════════════ -->
-        <Border Grid.Row="2" Background="{StaticResource BgSecondary}"
+        <Border Grid.Row="3" Background="{StaticResource BgSecondary}"
                 BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
             <Grid Margin="12,0">
                 <TextBlock x:Name="StatusLeft" FontSize="11"
