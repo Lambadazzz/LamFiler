@@ -63,8 +63,6 @@
                             <Border x:Name="bd" Background="{TemplateBinding Background}"
                                     IsHitTestVisible="False"/>
                             <ContentPresenter VerticalAlignment="Stretch"/>
-                            <!-- Прозрачный оверлей поверх — единственная цель для hit-test,
-                                 исключает мигания IsMouseOver при переходе между дочерними элементами -->
                             <Border Background="Transparent"
                                     IsHitTestVisible="True"
                                     Panel.ZIndex="99"/>
@@ -110,7 +108,6 @@
                 MouseMove="TabBar_MouseMove"
                 MouseLeftButtonUp="TabBar_MouseLeftButtonUp">
             <Grid>
-                <!-- Вкладки -->
                 <ScrollViewer x:Name="TabScroll"
                               HorizontalScrollBarVisibility="Hidden"
                               VerticalScrollBarVisibility="Disabled"
@@ -121,7 +118,6 @@
                                 DragOver="TabStrip_DragOver"
                                 Drop="TabStrip_Drop"/>
                 </ScrollViewer>
-                <!-- Кнопка новой вкладки -->
                 <Button x:Name="BtnNewTab" Click="BtnNewTab_Click"
                         Width="28" Height="22"
                         HorizontalAlignment="Right" VerticalAlignment="Center"
@@ -156,8 +152,10 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
+                <!-- Назад / Вперёд -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0">
                     <Button x:Name="BtnBack" Style="{StaticResource IconBtn}" Click="BtnBack_Click" IsEnabled="False" ToolTip="Назад">
                         <Path Data="M15 19 L8 12 L15 5" Stroke="{StaticResource TextMuted}"
@@ -171,6 +169,7 @@
                     </Button>
                 </StackPanel>
 
+                <!-- Breadcrumb -->
                 <Border Grid.Column="1" VerticalAlignment="Center"
                         Background="{StaticResource BgPrimary}"
                         BorderBrush="{StaticResource Border}" BorderThickness="1"
@@ -204,6 +203,7 @@
                     </ScrollViewer>
                 </Border>
 
+                <!-- Upload Drive -->
                 <Border Grid.Column="2" VerticalAlignment="Center" Margin="0,0,6,0"
                         BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="4" Height="26">
                     <Button x:Name="BtnUploadDrive" Background="Transparent" BorderThickness="0"
@@ -218,7 +218,20 @@
                     </Button>
                 </Border>
 
-                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                <!-- Кнопка переключения вида -->
+                <Button x:Name="BtnViewToggle" Grid.Column="3"
+                        Style="{StaticResource IconBtn}"
+                        Click="BtnViewToggle_Click"
+                        ToolTip="Переключить вид (Ctrl+1 — список, Ctrl+2 — сетка)"
+                        Margin="0,0,4,0">
+                    <Path x:Name="ViewToggleIcon"
+                          Data="M3 3 H8 V8 H3 Z M10 3 H15 V8 H10 Z M3 10 H8 V15 H3 Z M10 10 H15 V15 H10 Z"
+                          Fill="{StaticResource TextMuted}"
+                          Width="14" Height="14" Stretch="Uniform"/>
+                </Button>
+
+                <!-- Поиск -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center"
                             MouseEnter="SearchArea_MouseEnter" MouseLeave="SearchArea_MouseLeave">
                     <Border x:Name="SearchBorder"
                             Background="{StaticResource BgPrimary}"
@@ -274,7 +287,8 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0" Background="{StaticResource BgSecondary}"
+                <!-- Заголовки колонок (list mode) -->
+                <Border Grid.Row="0" x:Name="ListViewHeader" Background="{StaticResource BgSecondary}"
                         BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
                     <Grid Margin="12,0">
                         <Grid.ColumnDefinitions>
@@ -319,6 +333,7 @@
                     </Grid>
                 </Border>
 
+                <!-- List view -->
                 <ListView x:Name="FileList" Grid.Row="1"
                           Background="{StaticResource BgPrimary}"
                           BorderThickness="0"
@@ -349,7 +364,6 @@
                                     <ColumnDefinition Width="80"/>
                                     <ColumnDefinition Width="70"/>
                                 </Grid.ColumnDefinitions>
-                                <!-- Checkbox-зона -->
                                 <Border Grid.Column="0" x:Name="CheckZone"
                                         Background="#01000000"
                                         HorizontalAlignment="Stretch"
@@ -366,13 +380,11 @@
                                     <TextBlock Text="{Binding Icon}" FontSize="14"
                                                Foreground="{Binding IconColor}"
                                                VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <!-- Обычное имя (скрывается при редактировании) -->
                                     <TextBlock x:Name="NameLabel"
                                                Text="{Binding Name}" FontSize="13"
                                                Foreground="{StaticResource TextPrimary}"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"/>
-                                    <!-- Inline-редактор (виден только при IsRenaming=True) -->
                                     <TextBox x:Name="NameEditor"
                                              Text="{Binding EditName, UpdateSourceTrigger=PropertyChanged}"
                                              FontSize="13" Padding="2,1"
@@ -402,7 +414,6 @@
                                     <Setter TargetName="NameLabel"  Property="Visibility" Value="Collapsed"/>
                                     <Setter TargetName="NameEditor" Property="Visibility" Value="Visible"/>
                                 </DataTrigger>
-                                <!-- Точка появляется при hover строки или выборе -->
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListViewItem}}" Value="True">
                                     <Setter TargetName="CheckDot" Property="Opacity" Value="1"/>
                                     <Setter TargetName="CheckDot" Property="Fill" Value="#0078D4"/>
@@ -416,7 +427,24 @@
                     </ListView.ItemTemplate>
                 </ListView>
 
-                <!-- ══════ HOME PAGE ══════ -->
+                <!-- Grid view -->
+                <ScrollViewer x:Name="GridViewScroll" Grid.Row="1"
+                             Visibility="Collapsed"
+                             AllowDrop="True"
+                             Focusable="True"
+                             Background="{StaticResource BgPrimary}"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Disabled"
+                             PreviewMouseWheel="GridViewScroll_PreviewMouseWheel"
+                             DragOver="GridViewScroll_DragOver"
+                             DragLeave="GridViewScroll_DragLeave"
+                             Drop="GridViewScroll_Drop">
+                    <WrapPanel x:Name="GridViewPanel"
+                               Orientation="Horizontal"
+                               Margin="12,12,12,12"/>
+                </ScrollViewer>
+
+                <!-- Home page -->
                 <Grid x:Name="HomePanel" Grid.Row="1"
                       Background="{StaticResource BgPrimary}"
                       Panel.ZIndex="10" Visibility="Collapsed">
@@ -424,11 +452,9 @@
                         <StackPanel Margin="32,28,32,28">
                             <TextBlock Text="LamFiler" FontSize="22" FontWeight="SemiBold"
                                        Foreground="{StaticResource TextPrimary}" Margin="0,0,0,24"/>
-
                             <TextBlock Text="Быстрый доступ" FontSize="11" FontWeight="Medium"
                                        Foreground="{StaticResource TextMuted}" Margin="0,0,0,10"/>
                             <WrapPanel x:Name="HomeQuickPanel" Orientation="Horizontal" Margin="0,0,0,28"/>
-
                             <TextBlock Text="ДИСКИ" FontSize="11" FontWeight="Medium"
                                        Foreground="{StaticResource TextMuted}" Margin="0,0,0,10"/>
                             <WrapPanel x:Name="HomeDrivesPanel" Orientation="Horizontal"/>
@@ -441,7 +467,7 @@
             <GridSplitter Grid.Column="3" Width="4" Background="Transparent"
                           HorizontalAlignment="Center" VerticalAlignment="Stretch" Cursor="SizeWE"/>
 
-            <!-- Preview панель (правая, постоянная) -->
+            <!-- Preview панель -->
             <Border Grid.Column="4" Background="{StaticResource BgSecondary}"
                     BorderBrush="{StaticResource Border}" BorderThickness="1,0,0,0">
                 <Grid>
@@ -518,7 +544,6 @@
                     </Grid>
                 </Grid>
             </Border>
-
         </Grid>
 
         <!-- ══════════════ STATUSBAR ══════════════ -->

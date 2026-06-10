@@ -107,12 +107,20 @@ namespace LamFiler
             public string Label { get; set; } = "";
             public string Path  { get; set; } = "";
         }
-
+        private Border? _gridDragTargetCard;
+        private bool _gridDragPending = false;
+        private Point _gridDragStart;
+        private FileItem? _gridDragItem;
+        private bool _isGridView = false;
+        private int _gridLastClickedIndex = -1;
+        private int _gridCardSize = 100; // базовый размер карточки (ширина), мин 60 макс 200
         private string _currentPath = "";
         private readonly Stack<string> _backStack    = new();
         private readonly Stack<string> _forwardStack = new();
         private FileSystemWatcher? _watcher;
         private ObservableCollection<FileItem> _allItems = new();
+        private static readonly HashSet<string> _imgExts = new(StringComparer.OrdinalIgnoreCase)
+    { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp" };
 
         public MainWindow()
         {
@@ -245,6 +253,7 @@ namespace LamFiler
             var sorted = ApplySort(filtered).ToList();
             FileList.ItemsSource = sorted;
             StatusLeft.Text = $"{sorted.Count} items";
+            if (_isGridView) RefreshGridView();
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -516,18 +525,19 @@ namespace LamFiler
             {
                 if (hit is ListViewItem lvi && lvi.Content is FileItem fi)
                 {
-                    if (FileList.SelectedItems.Contains(fi))
-                        e.Handled = true;
-                    else
+                    if (!FileList.SelectedItems.Contains(fi))
                     {
                         FileList.SelectedItems.Clear();
                         FileList.SelectedItem = fi;
-                        e.Handled = true;
                     }
+                    e.Handled = true;
                     return;
                 }
                 hit = VisualTreeHelper.GetParent(hit);
             }
+            // Пустая область: снимаем выделение сразу в Down
+            FileList.SelectedItems.Clear();
+            e.Handled = true;
         }
 
         private void FileList_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
@@ -815,8 +825,9 @@ namespace LamFiler
         private FileItem? _dragItem;
 
         // ─── Rubber-band выделение ───────────────────────────────────────────
-        private bool    _rubberActive;   // идёт rubber-band (drag из checkbox-зоны)
-        private int     _rubberAnchor;   // индекс строки, с которой начали drag
+        private bool _rubberActive;   // идёт rubber-band (drag из checkbox-зоны)
+        private int _rubberAnchor;   // индекс строки, с которой начали drag
+        private HashSet<FileItem> _rubberSnapshot = new(); // выделение на момент старта drag
 
         private bool IsCheckZoneClick(MouseButtonEventArgs e)
         {
@@ -872,13 +883,21 @@ namespace LamFiler
 
                 if (clickedItem != null)
                 {
-                    // Toggle
-                    if (FileList.SelectedItems.Contains(clickedItem))
-                        FileList.SelectedItems.Remove(clickedItem);
-                    else
-                        FileList.SelectedItems.Add(clickedItem);
+                    // Снапшот текущего выделения ДО toggle — это база для rubber-band
+                    _rubberSnapshot = FileList.SelectedItems.Cast<FileItem>().ToHashSet();
 
-                    // Индекс для rubber-band anchor
+                    // Toggle в снапшоте: если был — убираем, если не был — добавляем
+                    if (_rubberSnapshot.Contains(clickedItem))
+                        _rubberSnapshot.Remove(clickedItem);
+                    else
+                        _rubberSnapshot.Add(clickedItem);
+
+                    // Применяем снапшот сразу (drag ещё не начался, диапазон = 1 элемент)
+                    FileList.SelectionChanged -= FileList_SelectionChanged;
+                    FileList.SelectedItems.Clear();
+                    foreach (var s in _rubberSnapshot) FileList.SelectedItems.Add(s);
+                    FileList.SelectionChanged += FileList_SelectionChanged;
+
                     _rubberAnchor = (FileList.ItemsSource as List<FileItem>)?.IndexOf(clickedItem) ?? -1;
                     _rubberActive = true;
                     FileList.Focus();
@@ -893,7 +912,7 @@ namespace LamFiler
             {
                 if (hitEl is ListViewItem lvi && lvi.Content is FileItem fi)
                 {
-                    _dragItem    = fi;
+                    _dragItem = fi;
                     _dragPending = true;
 
                     // Если кликнули на уже выделенный элемент (множественное выделение) —
@@ -907,6 +926,13 @@ namespace LamFiler
                     break;
                 }
                 hitEl = VisualTreeHelper.GetParent(hitEl);
+            }
+
+            // Клик на пустую область — снимаем выделение
+            if (_dragItem == null)
+            {
+                FileList.SelectedItems.Clear();
+                e.Handled = true;
             }
         }
 
@@ -950,13 +976,21 @@ namespace LamFiler
                 int from = Math.Min(_rubberAnchor, hoverIdx);
                 int to   = Math.Max(_rubberAnchor, hoverIdx);
 
-                // Обновляем выделение: все в диапазоне выделяем
+                // Объединяем снапшот (точечные) + текущий диапазон drag
                 FileList.SelectionChanged -= FileList_SelectionChanged;
                 FileList.SelectedItems.Clear();
+                // Элементы снапшота вне диапазона — сохраняем
+                foreach (var s in _rubberSnapshot)
+                {
+                    var si = rbItems.IndexOf(s);
+                    if (si < from || si > to)
+                        FileList.SelectedItems.Add(s);
+                }
+                // Весь диапазон drag
                 for (int i = from; i <= to; i++)
                     FileList.SelectedItems.Add(rbItems[i]);
                 FileList.SelectionChanged += FileList_SelectionChanged;
-                StatusLeft.Text = $"{to - from + 1} selected";
+                StatusLeft.Text = $"{FileList.SelectedItems.Count} selected";
 
                 e.Handled = true;
                 return;
@@ -1328,12 +1362,14 @@ namespace LamFiler
                     var newList = currentList.Where(f => !movedSet.Contains(f.FullPath)).ToList();
                     FileList.SelectionChanged -= FileList_SelectionChanged;
                     FileList.ItemsSource = newList;
+                    if (_isGridView) RefreshGridView();
                     // Выделяем папку-цель
                     var folder = newList.FirstOrDefault(f => f.FullPath.Equals(selectAfterPath, StringComparison.OrdinalIgnoreCase));
                     if (folder != null)
                     {
                         FileList.SelectedItem = folder;
-                        FileList.ScrollIntoView(folder);
+                        if (!_isGridView) FileList.ScrollIntoView(folder);
+                        else UpdateGridCardStyles();
                     }
                     FileList.SelectionChanged += FileList_SelectionChanged;
                     StatusLeft.Text = $"{newList.Count} items";
@@ -1388,10 +1424,172 @@ namespace LamFiler
         //  НОВАЯ ПАПКА (Ctrl+N)
         // ════════════════════════════════════════════════════════════════════
 
+        private void CreateNewFolderGrid()
+        {
+            var baseName = "Новая папка";
+            var name     = baseName;
+            int i        = 2;
+            while (Directory.Exists(Path.Combine(_currentPath, name)))
+                name = $"{baseName} ({i++})";
+
+            var placeholder = new FileItem
+            {
+                Name      = name,
+                EditName  = name,
+                Icon      = "📁",
+                IconColor = "#FAC775",
+                Modified  = DateTime.Now.ToString("dd MMM  HH:mm"),
+                Size      = "—",
+                TypeExt   = "Folder",
+                FullPath  = Path.Combine(_currentPath, name),
+                IsDir     = true
+            };
+
+            // Добавляем в список и сразу строим карточку
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+            var currentList = (FileList.ItemsSource as List<FileItem>) ?? new List<FileItem>();
+            currentList.Insert(0, placeholder);
+            FileList.ItemsSource = null;
+            FileList.ItemsSource = currentList;
+            FileList.SelectedItem = placeholder;
+
+            // Добавляем карточку в GridViewPanel
+            var card = BuildGridCard(placeholder);
+            GridViewPanel.Children.Insert(0, card);
+
+            // Запускаем ренейм прямо на ней через StartGridRename,
+            // но подменяем commit чтобы создавалась папка а не ренеймилась
+            _renamingItem = placeholder;
+
+            Dispatcher.InvokeAsync(() =>
+            {
+                // Находим стек и name TextBlock в карточке
+                if (card.Child is not Grid cg) return;
+                var stack = cg.Children.OfType<StackPanel>().FirstOrDefault();
+                if (stack == null) return;
+                var nameTb = stack.Children.OfType<TextBlock>().LastOrDefault();
+                if (nameTb == null) return;
+
+                nameTb.Visibility = Visibility.Collapsed;
+                var tb = new TextBox
+                {
+                    Text            = name,
+                    FontSize        = 11,
+                    Background      = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)),
+                    Foreground      = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                    BorderBrush     = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)),
+                    BorderThickness = new Thickness(1),
+                    CaretBrush      = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                    TextAlignment   = TextAlignment.Center,
+                    Padding         = new Thickness(2, 1, 2, 1),
+                    MaxWidth        = card.Width - 8
+                };
+                stack.Children.Add(tb);
+
+                var committed = false;
+
+                void cancelAndRemove()
+                {
+                    _renamingItem = null;
+                    _renameCommitting = false;
+                    nameTb.Visibility = Visibility.Visible;
+                    stack.Children.Remove(tb);
+                    // Убираем плейсхолдер из списков и грида
+                    GridViewPanel.Children.Remove(card);
+                    var lst = FileList.ItemsSource as List<FileItem>;
+                    lst?.Remove(placeholder);
+                    FileList.ItemsSource = null;
+                    FileList.ItemsSource = lst;
+                    _suppressWatcher = false;
+                    if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                }
+
+                void commit()
+                {
+                    if (_renameCommitting || committed) return;
+                    committed = true;
+                    var newName = tb.Text.Trim();
+
+                    var bad = Path.GetInvalidFileNameChars();
+                    if (string.IsNullOrEmpty(newName) || newName.Any(c => bad.Contains(c)))
+                    {
+                        // Недопустимое имя — возвращаемся к редактированию
+                        if (!string.IsNullOrEmpty(newName))
+                            MessageBox.Show("Имя содержит недопустимые символы.", "Lambada",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                        committed = false;
+                        Dispatcher.InvokeAsync(() => tb.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+                        return;
+                    }
+
+                    var newPath = Path.Combine(_currentPath, newName);
+                    if (Directory.Exists(newPath))
+                    {
+                        MessageBox.Show($"Папка \"{newName}\" уже существует.", "Lambada",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        committed = false;
+                        Dispatcher.InvokeAsync(() => tb.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+                        return;
+                    }
+
+                    // Всё ок — закрываем TextBox и создаём папку
+                    nameTb.Visibility = Visibility.Visible;
+                    stack.Children.Remove(tb);
+                    _renamingItem = null;
+
+                    try
+                    {
+                        Directory.CreateDirectory(newPath);
+                        _undo.Push(new FileAction
+                            { Type = FileActionType.CreateFolder, OldPath = "", NewPath = newPath });
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Ошибка:\n{ex.Message}", "Lambada",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        cancelAndRemove();
+                        return;
+                    }
+
+                    _renameCommitting = false;
+                    _suppressWatcher = false;
+                    if (_watcher != null) _watcher.EnableRaisingEvents = true;
+
+                    LoadDirectory(_currentPath);
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        var found = (FileList.ItemsSource as List<FileItem>)
+                            ?.FirstOrDefault(f => f.FullPath.Equals(newPath, StringComparison.OrdinalIgnoreCase));
+                        if (found != null) FileList.SelectedItem = found;
+                        UpdateGridCardStyles();
+                    }, System.Windows.Threading.DispatcherPriority.Loaded);
+                }
+
+                tb.KeyDown += (_, e) =>
+                {
+                    if (e.Key == Key.Return)  { commit(); e.Handled = true; }
+                    if (e.Key == Key.Escape)  { cancelAndRemove(); e.Handled = true; }
+                };
+                tb.LostFocus += (_, _) => commit();
+
+                tb.Focus();
+                tb.SelectAll();
+                GridViewScroll.ScrollToTop();
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
         private void CreateNewFolder()
         {
             // Фиксируем активное переименование если есть
             if (_renamingItem != null) CommitRename();
+
+            if (_isGridView)
+            {
+                CreateNewFolderGrid();
+                return;
+            }
 
             // Генерируем уникальное имя
             var baseName = "Новая папка";
@@ -1546,6 +1744,8 @@ namespace LamFiler
 
         private void StartRename(FileItem item)
         {
+            if (_isGridView) { StartGridRename(item); return; }
+
             // Если уже что-то переименовывается — фиксируем
             if (_renamingItem != null) CommitRename();
 
@@ -1565,6 +1765,121 @@ namespace LamFiler
                 // Выделяем имя без расширения
                 var dot = item.Name.LastIndexOf('.');
                 tb.Select(0, (dot > 0 && !item.IsDir) ? dot : item.Name.Length);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
+        private void StartGridRename(FileItem item)
+        {
+            if (_renamingItem != null) CommitRename();
+            _renamingItem  = item;
+            item.EditName  = item.Name;
+
+            // Находим карточку в GridViewPanel
+            var card = GridViewPanel.Children.OfType<Border>()
+                .FirstOrDefault(b => b.Tag == item);
+            if (card?.Child is not Grid cg) return;
+
+            // Находим TextBlock с именем (второй ребёнок stack)
+            var stack = cg.Children.OfType<StackPanel>().FirstOrDefault();
+            if (stack == null) return;
+            var nameTb = stack.Children.OfType<TextBlock>().LastOrDefault();
+            if (nameTb == null) return;
+
+            // Создаём TextBox поверх на позиции TextBlock
+            nameTb.Visibility = Visibility.Collapsed;
+            var tb = new TextBox
+            {
+                Text            = item.Name,
+                FontSize        = 11,
+                Background      = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)),
+                Foreground      = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                BorderBrush     = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4)),
+                BorderThickness = new Thickness(1),
+                CaretBrush      = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                TextAlignment   = TextAlignment.Center,
+                Padding         = new Thickness(2, 1, 2, 1),
+                MaxWidth        = card.Width - 8,
+                Tag             = (card, nameTb, item)
+            };
+            stack.Children.Add(tb);
+
+            var committed2 = false;
+
+            void commit()
+            {
+                if (_renameCommitting || committed2) return;
+                var newName = tb.Text.Trim();
+
+                // Валидация до закрытия TextBox
+                if (string.IsNullOrEmpty(newName) || newName == item.Name)
+                {
+                    // Пустое или неизменённое — просто закрываем
+                    committed2 = true;
+                    _renamingItem = null;
+                    _renameCommitting = false;
+                    nameTb.Visibility = Visibility.Visible;
+                    stack.Children.Remove(tb);
+                    nameTb.Text = item.Name;
+                    _suppressWatcher = false;
+                    if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                    return;
+                }
+
+                var badChars = System.IO.Path.GetInvalidFileNameChars();
+                if (newName.Any(c => badChars.Contains(c)))
+                {
+                    MessageBox.Show("Имя содержит недопустимые символы.", "Lambada",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    Dispatcher.InvokeAsync(() => tb.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+                    return;
+                }
+
+                var dir2    = System.IO.Path.GetDirectoryName(item.FullPath) ?? _currentPath;
+                var newPath2 = System.IO.Path.Combine(dir2, newName);
+                if (File.Exists(newPath2) || Directory.Exists(newPath2))
+                {
+                    MessageBox.Show($"Файл с именем \"{newName}\" уже существует.", "Lambada",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    Dispatcher.InvokeAsync(() => tb.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+                    return;
+                }
+
+                // Всё ок — закрываем TextBox и переименовываем
+                committed2 = true;
+                _renamingItem = null;
+                nameTb.Visibility = Visibility.Visible;
+                stack.Children.Remove(tb);
+                item.EditName   = newName;
+                item.IsRenaming = true;
+                _renamingItem   = item;
+                CommitRename();
+            }
+
+            tb.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Return)  { commit(); e.Handled = true; }
+                if (e.Key == Key.Escape)
+                {
+                    _renamingItem = null;
+                    _renameCommitting = false;
+                    nameTb.Visibility = Visibility.Visible;
+                    stack.Children.Remove(tb);
+                    _suppressWatcher = false;
+                    if (_watcher != null) _watcher.EnableRaisingEvents = true;
+                    e.Handled = true;
+                }
+            };
+            tb.LostFocus += (_, _) => commit();
+
+            _suppressWatcher = true;
+            if (_watcher != null) _watcher.EnableRaisingEvents = false;
+
+            Dispatcher.InvokeAsync(() =>
+            {
+                tb.Focus();
+                var dot = item.Name.LastIndexOf('.');
+                tb.Select(0, (dot > 0 && !item.IsDir) ? dot : item.Name.Length);
+                card.BringIntoView();
             }, System.Windows.Threading.DispatcherPriority.Loaded);
         }
 
@@ -2169,13 +2484,129 @@ namespace LamFiler
             return card;
         }
 
+        // Возвращает true если фокус находится внутри FileList (любой дочерний элемент)
+        private bool FocusIsInFileList()
+        {
+            var focused = Keyboard.FocusedElement as DependencyObject;
+            while (focused != null)
+            {
+                if (ReferenceEquals(focused, FileList)) return true;
+                focused = VisualTreeHelper.GetParent(focused)
+                       ?? LogicalTreeHelper.GetParent(focused as DependencyObject);
+            }
+            return false;
+        }
+
+        // Вычисляем количество колонок в плиточном виде по ширине панели
+        private int GridColumnsCount()
+        {
+            int cardW = _gridCardSize + 8; // width + margin*2
+            double panelWidth = GridViewPanel.ActualWidth;
+            if (panelWidth <= 0) panelWidth = GridViewScroll.ActualWidth - 16;
+            int cols = Math.Max(1, (int)(panelWidth / cardW));
+            return cols;
+        }
+
+        private System.Threading.Timer? _gridResizeDebounce;
+
+        private void GridViewScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            e.Handled = true;
+
+            int step = e.Delta > 0 ? 10 : -10;
+            _gridCardSize = Math.Max(60, Math.Min(200, _gridCardSize + step));
+
+            // Быстро меняем размер уже существующих карточек без пересоздания
+            foreach (Border card in GridViewPanel.Children.OfType<Border>())
+            {
+                int w = _gridCardSize;
+                int h = (int)(w * 1.1);
+                card.Width  = w;
+                card.Height = h;
+                if (card.Child is Grid cg)
+                {
+                    var stack = cg.Children.OfType<StackPanel>().FirstOrDefault();
+                    if (stack?.Children[0] is Border thumb)
+                        thumb.Height = (int)(w * 0.68);
+                }
+            }
+
+            // Полный rebuild через 150мс после последнего тика
+            _gridResizeDebounce?.Dispose();
+            _gridResizeDebounce = new System.Threading.Timer(_ =>
+                Dispatcher.InvokeAsync(() =>
+                {
+                    var selected = FileList.SelectedItems.Cast<FileItem>().ToList();
+                    RefreshGridView();
+                    FileList.SelectionChanged -= FileList_SelectionChanged;
+                    FileList.SelectedItems.Clear();
+                    foreach (var f in selected) FileList.SelectedItems.Add(f);
+                    FileList.SelectionChanged += FileList_SelectionChanged;
+                    if (FileList.SelectedIndex >= 0)
+                        _gridLastClickedIndex = FileList.SelectedIndex;
+                    UpdateGridCardStyles();
+                }),
+                null, 150, System.Threading.Timeout.Infinite);
+        }
+
+        // Навигация в плиточном виде
+        private void GridViewNavigate(Key key)
+        {
+            int count = FileList.Items.Count;
+            if (count == 0) return;
+            int cur = FileList.SelectedIndex < 0 ? 0 : FileList.SelectedIndex;
+            int cols = GridColumnsCount();
+            int next = cur;
+            switch (key)
+            {
+                case Key.Right: next = Math.Min(cur + 1, count - 1); break;
+                case Key.Left:  next = Math.Max(cur - 1, 0); break;
+                case Key.Down:  next = Math.Min(cur + cols, count - 1); break;
+                case Key.Up:    next = Math.Max(cur - cols, 0); break;
+            }
+            if (next == cur) return;
+            FileList.SelectedIndex = next;
+            _gridLastClickedIndex = next;
+            UpdateGridCardStyles();
+            // Скроллим карточку в видимую область
+            Dispatcher.InvokeAsync(() =>
+            {
+                var cards = GridViewPanel.Children.OfType<Border>().ToList();
+                if (next < cards.Count)
+                {
+                    cards[next].BringIntoView();
+                }
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
+
         private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (SearchBox.IsFocused) return;
             if (_renamingItem != null) return;
 
+            // Плиточный вид — перехватываем все стрелки
+            if (_isGridView && GridViewScroll.Visibility == Visibility.Visible)
+            {
+                if (e.Key == Key.Left || e.Key == Key.Right || e.Key == Key.Up || e.Key == Key.Down)
+                {
+                    GridViewNavigate(e.Key);
+                    e.Handled = true;
+                    return;
+                }
+            }
+
+            // Не перехватывать стрелки если фокус на интерактивном элементе (кнопки, вкладки)
+            var focused = Keyboard.FocusedElement as DependencyObject;
+            if (focused != null && !(focused is ListViewItem) && !(focused is ListView))
+            {
+                if (e.Key == Key.Up || e.Key == Key.Down) return;
+            }
+
             if (e.Key == Key.Down)
             {
+                // Стрелки перехватываем только когда фокус внутри FileList
+                if (!FocusIsInFileList()) return;
                 _lastArrowDirection = 1;
                 var i = FileList.SelectedIndex;
                 if (i < FileList.Items.Count - 1) { FileList.SelectedIndex = i + 1; ScrollIfNeeded(i + 1); }
@@ -2183,6 +2614,7 @@ namespace LamFiler
             }
             else if (e.Key == Key.Up)
             {
+                if (!FocusIsInFileList()) return;
                 _lastArrowDirection = -1;
                 var i = FileList.SelectedIndex;
                 if (i > 0) { FileList.SelectedIndex = i - 1; ScrollIfNeeded(i - 1); }
@@ -2329,6 +2761,14 @@ namespace LamFiler
                 if (item.IsDir) Navigate(item.FullPath);
                 else FileContextMenuService.OpenDefault(item.FullPath);
                 e.Handled = true;
+            }
+            else if (e.Key == Key.D1 && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                _isGridView = false; ApplyViewMode(); e.Handled = true;
+            }
+            else if (e.Key == Key.D2 && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                _isGridView = true; ApplyViewMode(); e.Handled = true;
             }
         }
 
@@ -2729,6 +3169,7 @@ namespace LamFiler
         {
             _watcher?.Dispose();
             _watcherDebounce?.Dispose();
+            _gridResizeDebounce?.Dispose();
             base.OnClosed(e);
         }
 
@@ -2855,6 +3296,556 @@ namespace LamFiler
                 }
             }, System.Windows.Threading.DispatcherPriority.Loaded);
         }
+        private void BtnViewToggle_Click(object sender, RoutedEventArgs e)
+        {
+            _isGridView = !_isGridView;
+            ApplyViewMode();
+        }
+        private void ApplyViewMode()
+        {
+            if (_isGridView)
+            {
+                FileList.Visibility = Visibility.Collapsed;
+                ListViewHeader.Visibility = Visibility.Collapsed;
+                GridViewScroll.Visibility = Visibility.Visible;
+                // Выделяем первый файл если ничего не выбрано — ДО RefreshGridView
+                if (FileList.SelectedItems.Count == 0 && FileList.Items.Count > 0)
+                    FileList.SelectedIndex = 0;
+                RefreshGridView(); // строит карточки; после него _gridLastClickedIndex = -1
+                // Синхронизируем _gridLastClickedIndex и красим карточки
+                if (FileList.SelectedIndex >= 0)
+                    _gridLastClickedIndex = FileList.SelectedIndex;
+                UpdateGridCardStyles();
+                // Фокус на ScrollViewer чтобы стрелки работали
+                Dispatcher.InvokeAsync(() => GridViewScroll.Focus(), System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            else
+            {
+                FileList.Visibility = Visibility.Visible;
+                ListViewHeader.Visibility = Visibility.Visible;
+                GridViewScroll.Visibility = Visibility.Collapsed;
+                // Выделяем первый файл если ничего не выбрано
+                if (FileList.SelectedItems.Count == 0 && FileList.Items.Count > 0)
+                {
+                    FileList.SelectedIndex = 0;
+                    ScrollIfNeeded(0);
+                }
+                Dispatcher.InvokeAsync(() => FileList.Focus(), System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+        }
+        private void RefreshGridView()
+        {
+            _gridLastClickedIndex = -1;
+            GridViewPanel.Children.Clear();
+            var items = FileList.ItemsSource as List<FileItem>;
+            if (items == null) return;
+            foreach (var item in items)
+            {
+                var card = BuildGridCard(item);
+                GridViewPanel.Children.Add(card);
+            }
+
+            // Перевешиваем каждый раз чтобы не дублировать
+            GridViewScroll.PreviewMouseLeftButtonDown -= GridView_PreviewMouseDown;
+            GridViewScroll.PreviewMouseLeftButtonDown += GridView_PreviewMouseDown;
+            GridViewScroll.PreviewMouseLeftButtonUp   -= GridView_PreviewMouseUp;
+            GridViewScroll.PreviewMouseLeftButtonUp   += GridView_PreviewMouseUp;
+            GridViewScroll.MouseMove                  -= GridView_MouseMove;
+            GridViewScroll.MouseMove                  += GridView_MouseMove;
+            GridViewScroll.MouseRightButtonUp         -= GridView_MouseRightButtonUp;
+            GridViewScroll.MouseRightButtonUp         += GridView_MouseRightButtonUp;
+        }
+
+        // Находим карточку (Border с Tag=FileItem) в visual tree от точки клика
+        private FileItem? GridCardHitTest(MouseEventArgs e)
+        {
+            var hit = e.OriginalSource as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is Border b && b.Tag is FileItem fi) return fi;
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            return null;
+        }
+
+        private void GridView_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            var item = GridCardHitTest(e);
+            if (item == null) return;
+
+            if (e.ClickCount == 2)
+            {
+                _gridDragPending = false;
+                if (item.IsDir) Navigate(item.FullPath);
+                else FileContextMenuService.OpenDefault(item.FullPath);
+                e.Handled = true;
+                return;
+            }
+
+            _gridDragStart   = e.GetPosition(null);
+            _gridDragPending = true;
+            _gridDragItem    = item;
+            // Не вызываем e.Handled = true — чтобы ScrollViewer мог получить фокус
+        }
+
+        private void GridView_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_gridDragPending) return;
+            _gridDragPending = false;
+
+            var item = GridCardHitTest(e);
+            if (item == null) return;
+
+            var items = FileList.ItemsSource as List<FileItem>;
+            if (items == null) return;
+            int idx  = items.IndexOf(item);
+            var mods = Keyboard.Modifiers;
+
+            if (mods == ModifierKeys.Control)
+            {
+                if (FileList.SelectedItems.Contains(item))
+                    FileList.SelectedItems.Remove(item);
+                else
+                    FileList.SelectedItems.Add(item);
+                _gridLastClickedIndex = idx;
+            }
+            else if (mods == ModifierKeys.Shift && _gridLastClickedIndex >= 0)
+            {
+                int from = Math.Min(_gridLastClickedIndex, idx);
+                int to   = Math.Max(_gridLastClickedIndex, idx);
+                FileList.SelectedItems.Clear();
+                for (int i = from; i <= to; i++)
+                    FileList.SelectedItems.Add(items[i]);
+            }
+            else
+            {
+                FileList.SelectedItems.Clear();
+                FileList.SelectedItems.Add(item);
+                _gridLastClickedIndex = idx;
+            }
+
+            UpdateGridCardStyles();
+            e.Handled = true;
+        }
+
+        private void GridView_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_gridDragPending || _gridDragItem == null) return;
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                _gridDragPending = false;
+                return;
+            }
+
+            var diff = e.GetPosition(null) - _gridDragStart;
+            if (Math.Abs(diff.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(diff.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _gridDragPending = false;
+
+            if (!FileList.SelectedItems.Contains(_gridDragItem))
+            {
+                FileList.SelectedItems.Clear();
+                FileList.SelectedItems.Add(_gridDragItem);
+                UpdateGridCardStyles();
+            }
+
+            var paths = FileList.SelectedItems.Cast<FileItem>()
+                .Select(f => f.FullPath).ToArray();
+            var data = new DataObject(DataFormats.FileDrop, paths);
+
+            _isDragging = true;
+            try
+            {
+                DragDrop.DoDragDrop(GridViewScroll, data, DragDropEffects.Copy | DragDropEffects.Move);
+            }
+            finally
+            {
+                _isDragging = false;
+                _gridDragItem = null;
+            }
+        }
+
+        private void GridView_MouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // Если клик по карточке — обрабатывается в ПКМ внутри BuildGridCard
+            var clickedItem = GridCardHitTest(e);
+            if (clickedItem != null) return;
+
+            // Клик по пустому месту — снимаем выделение и показываем меню текущей папки
+            FileList.SelectedItems.Clear();
+            UpdateGridCardStyles();
+
+            var menu = BuildContextMenu();
+            menu.Items.Add(Mni("🖥", "Открыть терминал здесь", () =>
+                FileContextMenuService.RunScript(
+                    new ScriptEntry { Command = "powershell.exe",
+                        Args = $"-NoExit -Command \"Set-Location '{_currentPath}'\"" },
+                    _currentPath)));
+            menu.Items.Add(Mni("📋", "Копировать путь папки",
+                () => FileContextMenuService.CopyPath(_currentPath)));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(BuildCreateSubmenu());
+
+            menu.PlacementTarget = GridViewScroll;
+            menu.Placement = PlacementMode.MousePoint;
+            menu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private Border BuildGridCard(FileItem item)
+        {
+            int CardW  = _gridCardSize;
+            int CardH  = (int)(CardW * 1.1);      // высота пропорциональна ширине
+            int ThumbH = (int)(CardW * 0.68);
+
+            var card = new Border
+            {
+                Width = CardW,
+                Height = CardH,
+                Margin = new Thickness(4),
+                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Cursor = Cursors.Hand,
+                ClipToBounds = true,
+                Tag = item
+            };
+
+            var stack = new StackPanel { IsHitTestVisible = false };
+
+            // Thumbnail
+            var thumbBorder = new Border
+            {
+                Height = ThumbH,
+                Background = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
+                ClipToBounds = true,
+                IsHitTestVisible = false
+            };
+
+            if (!item.IsDir && _imgExts.Contains(item.TypeExt))
+            {
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = new Uri(item.FullPath);
+                    bmp.DecodePixelWidth = CardW * 2;
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.EndInit();
+                    thumbBorder.Child = new Image
+                    {
+                        Source = bmp,
+                        Stretch = Stretch.UniformToFill,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                }
+                catch
+                {
+                    thumbBorder.Child = new TextBlock
+                    {
+                        Text = item.Icon,
+                        FontSize = 28,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.IconColor))
+                    };
+                }
+            }
+            else
+            {
+                thumbBorder.Child = new TextBlock
+                {
+                    Text = item.IsDir ? "📁" : item.Icon,
+                    FontSize = item.IsDir ? 32 : 28,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(item.IsDir
+                        ? Color.FromRgb(0xFA, 0xC7, 0x75)
+                        : (Color)ColorConverter.ConvertFromString(item.IconColor))
+                };
+            }
+
+            stack.Children.Add(thumbBorder);
+            stack.Children.Add(new TextBlock
+            {
+                Text = item.Name,
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
+                TextAlignment = TextAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(4, 4, 4, 2),
+                MaxWidth = CardW - 8
+            });
+            // Оборачиваем stack в Grid и добавляем прозрачный оверлей поверх
+            // (тот же подход что в FileRow — оверлей перехватывает все клики)
+            var cardGrid = new Grid();
+            cardGrid.Children.Add(stack);
+            var overlay = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)), // #01000000
+                IsHitTestVisible = true
+            };
+            cardGrid.Children.Add(overlay);
+            card.Child = cardGrid;
+
+            // Hover — не подсвечиваем если карточка выделена
+            card.MouseEnter += (_, _) =>
+            {
+                if (!FileList.SelectedItems.Contains(item))
+                    card.Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D));
+            };
+            card.MouseLeave += (_, _) =>
+            {
+                bool sel = FileList.SelectedItems.Contains(item);
+                card.Background = new SolidColorBrush(sel
+                    ? Color.FromRgb(0x09, 0x47, 0x71)
+                    : Color.FromRgb(0x25, 0x25, 0x26));
+            };
+
+            // ПКМ
+            card.MouseRightButtonUp += (_, e) =>
+            {
+                // Если кликнули по невыделенной карточке — выделяем только её
+                if (!FileList.SelectedItems.Contains(item))
+                {
+                    FileList.SelectedItems.Clear();
+                    FileList.SelectedItems.Add(item);
+                    _gridLastClickedIndex = (FileList.ItemsSource as List<FileItem>)?.IndexOf(item) ?? -1;
+                    UpdateGridCardStyles();
+                }
+
+                // Переключаемся в list-режим временно не нужно — вызываем то же меню
+                // Эмулируем ПКМ через тот же метод что строит меню в list-режиме
+                var selected = FileList.SelectedItems.Cast<FileItem>().ToList();
+                var menuItem = selected.Count == 1 ? selected[0] : null;
+                if (selected.Count > 1) menuItem = null;
+
+                var menu = BuildContextMenu();
+
+                if (selected.Count > 1)
+                {
+                    menu.Items.Add(Mni("☁", $"Загрузить все на Google Drive ({selected.Count})",
+                        () => UploadToDrive(selected.Select(f => f.FullPath).ToList())));
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(Mni("📋", "Копировать пути",
+                        () => FileContextMenuService.CopyPath(
+                            string.Join(Environment.NewLine, selected.Select(f => f.FullPath)))));
+                }
+                else if (menuItem != null)
+                {
+                    if (!menuItem.IsDir && menuItem.TypeExt is ".exe" or ".msi")
+                    {
+                        var subRun = MniSubClickable("▶", "Запустить",
+                            () => FileContextMenuService.OpenDefault(menuItem.FullPath));
+                        subRun.Items.Add(Mni("🛡", "Запустить от имени администратора",
+                            () => RunAsAdmin(menuItem.FullPath)));
+                        menu.Items.Add(subRun);
+                    }
+                    else if (menuItem.IsDir)
+                    {
+                        var subOpen = MniSubClickable("▶", "Открыть",
+                            () => Navigate(menuItem.FullPath));
+                        subOpen.Items.Add(Mni("⊞", "Открыть в новой вкладке",
+                            () => OpenInNewTab(menuItem.FullPath)));
+                        menu.Items.Add(subOpen);
+                    }
+                    else
+                    {
+                        menu.Items.Add(Mni("▶", "Открыть",
+                            () => FileContextMenuService.OpenDefault(menuItem.FullPath)));
+                    }
+
+                    menu.Items.Add(Mni("✏", "Переименовать", () => StartRename(menuItem)));
+
+                    var apps = FileContextMenuService.GetOpenWithApps(menuItem.FullPath);
+                    if (apps.Count > 0)
+                    {
+                        var sub = MniSub("🔧", "Открыть с помощью");
+                        foreach (var app in apps)
+                        {
+                            var a = app;
+                            sub.Items.Add(Mni("💻", a.DisplayName,
+                                () => FileContextMenuService.OpenWith(a.ExePath, menuItem.FullPath)));
+                        }
+                        menu.Items.Add(sub);
+                    }
+
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(Mni("☁", "Загрузить на Google Drive",
+                        () => UploadToDrive(new List<string> { menuItem.FullPath })));
+                    menu.Items.Add(new Separator());
+
+                    var scripts = FileContextMenuService.LoadScripts();
+                    if (scripts.Count > 0)
+                    {
+                        var subS = MniSub("⚡", "Запустить скрипт");
+                        foreach (var s in scripts)
+                        {
+                            var sc = s;
+                            subS.Items.Add(sc.Command == "__copy_path__"
+                                ? Mni("📋", sc.Label, () => FileContextMenuService.CopyPath(menuItem.FullPath))
+                                : Mni("▶", sc.Label, () => FileContextMenuService.RunScript(sc, menuItem.FullPath)));
+                        }
+                        menu.Items.Add(subS);
+                        menu.Items.Add(new Separator());
+                    }
+
+                    menu.Items.Add(Mni("📂", "Показать в Проводнике",
+                        () => FileContextMenuService.RevealInExplorer(menuItem.FullPath)));
+                    menu.Items.Add(Mni("📋", "Копировать путь",
+                        () => FileContextMenuService.CopyPath(menuItem.FullPath)));
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(BuildCreateSubmenu());
+                }
+                else
+                {
+                    menu.Items.Add(Mni("🖥", "Открыть терминал здесь", () =>
+                        FileContextMenuService.RunScript(
+                            new ScriptEntry
+                            {
+                                Command = "powershell.exe",
+                                Args = $"-NoExit -Command \"Set-Location '{_currentPath}'\""
+                            },
+                            _currentPath)));
+                    menu.Items.Add(Mni("📋", "Копировать путь папки",
+                        () => FileContextMenuService.CopyPath(_currentPath)));
+                    menu.Items.Add(new Separator());
+                    menu.Items.Add(BuildCreateSubmenu());
+                }
+
+                menu.PlacementTarget = card;
+                menu.Placement = PlacementMode.MousePoint;
+                menu.IsOpen = true;
+                e.Handled = true;
+            };
+
+            return card;
+        }
+        private void UpdateGridCardStyles()
+        {
+            var selected = FileList.SelectedItems.Cast<FileItem>().ToHashSet();
+            foreach (Border c in GridViewPanel.Children.OfType<Border>())
+            {
+                if (c.Tag is not FileItem fi) continue;
+                c.Background = new SolidColorBrush(selected.Contains(fi)
+                    ? Color.FromRgb(0x09, 0x47, 0x71)
+                    : Color.FromRgb(0x25, 0x25, 0x26));
+            }
+        }
+
+        private FileItem? GridHitTestItem(DragEventArgs e)
+        {
+            var pos = e.GetPosition(GridViewPanel);
+            var hit = VisualTreeHelper.HitTest(GridViewPanel, pos)?.VisualHit as DependencyObject;
+            while (hit != null)
+            {
+                if (hit is Border b && b.Tag is FileItem fi) return fi;
+                hit = VisualTreeHelper.GetParent(hit);
+            }
+            return null;
+        }
+
+        private void SetGridDragTarget(Border? card)
+        {
+            if (_gridDragTargetCard == card) return;
+            if (_gridDragTargetCard != null)
+            {
+                var prevItem = _gridDragTargetCard.Tag as FileItem;
+                bool sel = prevItem != null && FileList.SelectedItems.Contains(prevItem);
+                _gridDragTargetCard.Background = new SolidColorBrush(sel
+                    ? Color.FromRgb(0x09, 0x47, 0x71)
+                    : Color.FromRgb(0x25, 0x25, 0x26));
+                _gridDragTargetCard.BorderBrush = new SolidColorBrush(Color.FromRgb(0x3C, 0x3C, 0x3C));
+            }
+            _gridDragTargetCard = card;
+            if (card != null)
+            {
+                card.Background = _brushDragTarget;
+                card.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x78, 0xD4));
+            }
+        }
+
+        private void GridViewScroll_DragOver(object sender, DragEventArgs e)
+        {
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effects = DragDropEffects.None;
+                e.Handled = true;
+                return;
+            }
+
+            var hoveredItem = GridHitTestItem(e);
+
+            // Находим карточку для подсветки
+            Border? hoveredCard = null;
+            if (hoveredItem != null)
+            {
+                hoveredCard = GridViewPanel.Children.OfType<Border>()
+                    .FirstOrDefault(b => b.Tag == hoveredItem);
+            }
+            SetGridDragTarget(
+                hoveredCard != null && hoveredItem != null &&
+                (hoveredItem.IsDir || hoveredItem.TypeExt is ".zip" or ".rar" or ".7z")
+                    ? hoveredCard : null);
+
+            // Дроп в текущую папку — запрещаем если источники уже здесь
+            if (hoveredItem == null)
+            {
+                var sources = e.Data.GetData(DataFormats.FileDrop) as string[];
+                if (sources != null &&
+                    sources.All(s => (Path.GetDirectoryName(s) ?? "")
+                        .Equals(_currentPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    e.Effects = DragDropEffects.None;
+                    e.Handled = true;
+                    return;
+                }
+            }
+
+            e.Effects = (e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                ? DragDropEffects.Copy : DragDropEffects.Move;
+            e.Handled = true;
+        }
+
+        private void GridViewScroll_DragLeave(object sender, DragEventArgs e)
+        {
+            SetGridDragTarget(null);
+        }
+
+        private void GridViewScroll_Drop(object sender, DragEventArgs e)
+        {
+            SetGridDragTarget(null);
+
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (sources == null || sources.Length == 0) return;
+
+            var hoveredItem = GridHitTestItem(e);
+
+            // Дроп в архив
+            if (hoveredItem != null && !hoveredItem.IsDir)
+            {
+                var ext = Path.GetExtension(hoveredItem.FullPath).ToLowerInvariant();
+                if (ext is ".zip" or ".rar" or ".7z")
+                {
+                    DropIntoArchive(sources, hoveredItem.FullPath, ext);
+                    return;
+                }
+            }
+
+            // Дроп в папку или в текущую директорию
+            var targetDir = hoveredItem?.IsDir == true
+                ? hoveredItem.FullPath
+                : _currentPath;
+
+            var isCopy = (e.KeyStates & DragDropKeyStates.ControlKey) != 0
+                      || e.AllowedEffects == DragDropEffects.Copy;
+
+            string? selectAfterPath = hoveredItem?.IsDir == true ? hoveredItem.FullPath : null;
+            DropFiles(sources, targetDir, isCopy, selectAfterPath);
+        }
     }
 }
-
